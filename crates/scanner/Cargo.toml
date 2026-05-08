@@ -1,0 +1,11 @@
+[package]
+name = "wayland-oxide-scanner"
+edition.workspace = true
+
+[dependencies]
+prettyplease = "*"
+proc-macro2 = "1"
+quick-xml = { version = "*", features = ["overlapped-lists", "serialize"] }
+quote = { version = "1" }
+serde = { version = "1", features = ["derive"] }
+syn = { version = "2" }
