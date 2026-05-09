@@ -288,7 +288,7 @@ pub unsafe trait HasRequests<'a> {
 pub unsafe trait HasEvents<'a> {
     type Event: MessageEnum<'a>;
 }
-pub unsafe trait Proxy: Copy {
+pub unsafe trait Proxy: Copy + Debug {
     fn new(object: Object) -> Self;
     fn id(self) -> Object;
 

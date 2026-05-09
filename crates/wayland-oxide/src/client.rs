@@ -44,6 +44,23 @@ pub struct Arena<D: 'static + ?Sized> {
     reusable: Vec<Object>,
 }
 
+pub trait DropHandle {
+    fn drop<D>(self, arena: &mut Arena<D>) -> Result<(), ProtocolError>;
+}
+impl DropHandle for u32 {
+    fn drop<D>(self, arena: &mut Arena<D>) -> Result<(), ProtocolError> {
+        if let Some(id) = NonZero::new(self) {
+            arena.drop_object(Object(id))?
+        }
+        Ok(())
+    }
+}
+impl<P: Proxy> DropHandle for P {
+    fn drop<D>(self, arena: &mut Arena<D>) -> Result<(), ProtocolError> {
+        arena.drop_object(self.id())
+    }
+}
+
 impl<D: 'static> Arena<D> {
     pub fn new() -> Self {
         Self {
@@ -104,11 +121,8 @@ impl<D: 'static> Arena<D> {
         .copied()
         .flatten()
     }
-    pub fn drop(&mut self, id: u32) -> Result<(), ProtocolError> {
-        if let Some(id) = NonZero::new(id) {
-            self.drop_object(Object(id))?
-        }
-        Ok(())
+    pub fn drop<Handle: DropHandle>(&mut self, handle: Handle) -> Result<(), ProtocolError> {
+        handle.drop(self)
     }
     fn drop_object(&mut self, id: Object) -> Result<(), ProtocolError> {
         if id.as_u32() < ID_SPACE_MASK {

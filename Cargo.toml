@@ -1,19 +1,15 @@
-[package]
-name = "wayland-oxide"
-edition.workspace = true
-
 [workspace]
-resolver = "2"
-members = ["crates/*"]
+resolver = "3"
+members = [
+  "crates/*",
+
+  "examples",
+]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-bitflags = { version = "2.11.1", default-features = false, features = [] }
-thiserror = { version = "2.0.18", default-features = false }
-tuplez = { version = "0.15.0", default-features = false, features = ["unwrap"] }
-
-[features]
-default = []
-std = []
+[workspace.dependencies]
+wayland-oxide = { path = "crates/wayland-oxide" }
+wayland-oxide-scanner = { path = "crates/scanner" }

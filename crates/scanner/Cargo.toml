@@ -1,5 +1,6 @@
 [package]
 name = "wayland-oxide-scanner"
+version.workspace = true
 edition.workspace = true
 
 [dependencies]

@@ -1,0 +1,13 @@
+[package]
+name = "wayland-oxide"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+bitflags = { version = "2.11.1", default-features = false, features = [] }
+thiserror = { version = "2.0.18", default-features = false }
+tuplez = { version = "0.15.0", default-features = false }
+
+[features]
+default = []
+std = []

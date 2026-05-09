@@ -91,6 +91,14 @@ pub trait MarshalExt: Marshal {
             buf.assume_init()
         }
     }
+    fn marshal_to(&self, vec: &mut Vec<u8>) {
+        let size = self.calc_size();
+        vec.reserve(size);
+        unsafe {
+            Writer::new(vec.spare_capacity_mut()).write(self);
+            vec.set_len(vec.len() + size);
+        };
+    }
 }
 
 impl<T: Marshal> MarshalExt for T {}

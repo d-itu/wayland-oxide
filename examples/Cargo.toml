@@ -1,0 +1,15 @@
+[package]
+name = "wayland-oxide-examples"
+version.workspace = true
+edition.workspace = true
+
+[[example]]
+name = "list-globals"
+
+[dependencies]
+rustix = { version = "1.1.4", features = ["fs", "mm", "net"] }
+tuplez = { version = "0.15.0", default-features = false }
+wayland-oxide = { workspace = true, features = ["std"] }
+
+[build-dependencies]
+wayland-oxide-scanner.workspace = true
