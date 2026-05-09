@@ -10,6 +10,9 @@ use thiserror::Error;
 pub enum Error {
     #[error("not enough data")]
     NotEnoughData,
+
+    #[error("null object")]
+    NullObject,
 }
 
 pub type Result<T> = result::Result<T, Error>;

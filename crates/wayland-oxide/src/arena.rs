@@ -202,6 +202,7 @@ impl<D: 'static> Arena<D> {
             }: Header = match reader.read() {
                 Ok(x) => x,
                 Err(unmarshal::Error::NotEnoughData) => break reader.into_inner().len(),
+                Err(e) => Err(e)?,
             };
             let size = size - 8;
             let (_, remaining) = match reader.into_inner().split_at_checked(size as _) {

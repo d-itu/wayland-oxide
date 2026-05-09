@@ -81,6 +81,16 @@ impl Object {
     }
 }
 
+unsafe impl TrivialMarshal for Object {}
+unsafe impl Unmarshal<'_> for Object {
+    fn unmarshal(reader: &mut Reader<'_>) -> unmarshal::Result<Self> {
+        let id: u32 = reader.read_trivial()?;
+        NonZeroU32::new(id)
+            .map(Object)
+            .ok_or_else(|| unmarshal::Error::NullObject)
+    }
+}
+
 pub type NewId = Object;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -99,6 +109,15 @@ pub struct Header<P = Object, O = u16> {
     pub object: P,
     pub opcode: O,
     pub size: u16,
+}
+unsafe impl<'a, P: Unmarshal<'a>, O: Opcode> Unmarshal<'a> for Header<P, O> {
+    fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
+        Ok(Self {
+            object: reader.read()?,
+            opcode: reader.read_trivial()?,
+            size: reader.read_trivial()?,
+        })
+    }
 }
 
 pub trait MessageBody {
@@ -137,15 +156,18 @@ const fn aligned(align: usize, size: usize) -> usize {
     size + align_padding(align, size)
 }
 
+pub unsafe trait TrivialMarshal {}
+unsafe impl<T: Trivial> TrivialMarshal for T {}
+pub unsafe trait TrivialUnmarshal {}
+unsafe impl<T: Trivial> TrivialUnmarshal for T {}
 pub unsafe trait Trivial {}
 unsafe impl Trivial for i32 {}
 unsafe impl Trivial for u32 {}
 unsafe impl Trivial for Fixed {}
-unsafe impl Trivial for Object {}
 unsafe impl Trivial for Option<Object> {}
-unsafe impl<P: Trivial, T: Opcode> Trivial for Header<P, T> {}
+unsafe impl<P, T: Opcode> TrivialMarshal for Header<P, T> {}
 
-unsafe impl<T: Trivial> Marshal for T {
+unsafe impl<T: TrivialMarshal> Marshal for T {
     fn calc_size(&self) -> usize {
         mem::size_of::<Self>()
     }
@@ -153,7 +175,7 @@ unsafe impl<T: Trivial> Marshal for T {
         unsafe { writer.write_trivial(self) };
     }
 }
-unsafe impl<T: Trivial> Unmarshal<'_> for T {
+unsafe impl<T: TrivialUnmarshal> Unmarshal<'_> for T {
     fn unmarshal(reader: &mut Reader) -> unmarshal::Result<Self> {
         reader.read_trivial()
     }
@@ -263,7 +285,7 @@ unsafe impl Unmarshal<'_> for Fd {
     }
 }
 
-unsafe impl<P: Trivial, T: MessageBody + Marshal> Marshal for Message<P, T> {
+unsafe impl<P: Marshal, T: MessageBody + Marshal> Marshal for Message<P, T> {
     fn calc_size(&self) -> usize {
         self.header.calc_size() + self.body.calc_size()
     }
@@ -274,7 +296,9 @@ unsafe impl<P: Trivial, T: MessageBody + Marshal> Marshal for Message<P, T> {
         }
     }
 }
-unsafe impl<'a, P: Proxy, T: MessageBody + Unmarshal<'a>> Unmarshal<'a> for Message<P, T> {
+unsafe impl<'a, P: Proxy + Unmarshal<'a>, T: MessageBody + Unmarshal<'a>> Unmarshal<'a>
+    for Message<P, T>
+{
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         Ok(Self {
             header: reader.read()?,
@@ -298,7 +322,6 @@ pub unsafe trait Proxy: Copy + Debug {
 
     const INTERFACE: Interface;
 }
-unsafe impl<P: Proxy> Trivial for P {}
 unsafe impl<P: Proxy> Trivial for Option<P> {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

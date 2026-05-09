@@ -183,6 +183,12 @@ impl ToTokens for WithSide<&Interface> {
 
                     const INTERFACE: ::wayland_oxide::Interface = INTERFACE;
                 }
+                unsafe impl ::wayland_oxide::TrivialMarshal for Proxy {}
+                unsafe impl ::wayland_oxide::Unmarshal<'_> for Proxy {
+                    fn unmarshal(reader: &mut ::wayland_oxide::unmarshal::Reader) -> ::wayland_oxide::unmarshal::Result<Self> {
+                        Ok(Self(reader.read()?))
+                    }
+                }
 
                 pub const INTERFACE: ::wayland_oxide::Interface = ::wayland_oxide::Interface {
                     name: #interface,
