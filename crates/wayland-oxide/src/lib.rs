@@ -14,6 +14,7 @@ pub use bitflags::bitflags;
 use thiserror::Error;
 
 pub use crate::{
+    arena::{DropHandle, VTable},
     buffer::Buffer,
     marshal::{Marshal, MarshalExt, Writer},
     unmarshal::{Lazy, Reader, Unmarshal},
@@ -350,7 +351,10 @@ pub enum ProtocolError {
     },
 }
 
-pub mod buffer;
+mod arena;
 pub mod client;
+pub mod server;
+
+pub mod buffer;
 pub mod marshal;
 pub mod unmarshal;
