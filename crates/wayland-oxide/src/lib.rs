@@ -1,4 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![deny(missing_docs)]
+//! Pure rust wayland implementation
 
 extern crate alloc;
 
@@ -14,7 +16,7 @@ pub use bitflags::bitflags;
 use thiserror::Error;
 
 pub use crate::{
-    arena::{DropHandle, VTable},
+    arena::DropHandle,
     buffer::Buffer,
     marshal::{Marshal, MarshalExt, Writer},
     unmarshal::{Lazy, Reader, Unmarshal},
@@ -27,6 +29,7 @@ pub struct Fixed(i32);
 
 #[repr(transparent)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Unix fd. This type does not encode into message buffer. It hints you to where an fd is needed.
 pub struct Fd;
 
 impl Debug for Fixed {
@@ -36,15 +39,19 @@ impl Debug for Fixed {
 }
 
 impl Fixed {
+    /// Create a fixed from it's underlying binary representation.
     pub const fn from_bits(value: i32) -> Self {
         Self(value)
     }
+    /// Convert to underlying binary representation.
     pub const fn as_bits(self) -> i32 {
         self.0
     }
+    /// Convert from f64.
     pub const fn from_f64(value: f64) -> Self {
         Self((value * 256.0) as i32)
     }
+    /// Convert to f64.
     pub const fn as_f64(self) -> f64 {
         self.0 as f64 / 256.0
     }
@@ -64,6 +71,7 @@ impl Into<f64> for Fixed {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
+/// 32-bit object ID. A null value is represented with an ID of 0.
 pub struct Object(NonZeroU32);
 
 impl Debug for Object {
@@ -73,9 +81,11 @@ impl Debug for Object {
 }
 
 impl Object {
+    /// Get underlying u32 data.
     pub fn as_u32(self) -> u32 {
         self.0.get()
     }
+    /// Construct from u32. Input must not be 0
     pub unsafe fn from_u32(x: u32) -> Self {
         Self(unsafe { NonZeroU32::new_unchecked(x) })
     }
@@ -91,19 +101,26 @@ unsafe impl Unmarshal<'_> for Object {
     }
 }
 
+/// A new allocated id.
 pub type NewId = Object;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// A new id without specified interface
 pub struct GenericNewId<'a> {
+    /// Interface name
     pub interface: &'a str,
+    /// Interface version
     pub version: u32,
+    /// new_id value
     pub id: Object,
 }
 
+#[doc(hidden)]
 pub unsafe trait Opcode {}
 unsafe impl Opcode for u16 {}
 
 #[repr(C)]
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Header<P = Object, O = u16> {
     pub object: P,
@@ -120,15 +137,18 @@ unsafe impl<'a, P: Unmarshal<'a>, O: Opcode> Unmarshal<'a> for Header<P, O> {
     }
 }
 
+#[doc(hidden)]
 pub trait MessageBody {
     type Opcode: Opcode;
     const OPCODE: Self::Opcode;
 }
 
+#[doc(hidden)]
 pub trait MessageEnum<'a> {
     fn new(opcode: u16, reader: Reader<'a>) -> Self;
 }
 
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Message<P, T: MessageBody> {
     pub header: Header<P, T::Opcode>,
@@ -156,10 +176,13 @@ const fn aligned(align: usize, size: usize) -> usize {
     size + align_padding(align, size)
 }
 
+#[doc(hidden)]
 pub unsafe trait TrivialMarshal {}
 unsafe impl<T: Trivial> TrivialMarshal for T {}
+#[doc(hidden)]
 pub unsafe trait TrivialUnmarshal {}
 unsafe impl<T: Trivial> TrivialUnmarshal for T {}
+#[doc(hidden)]
 pub unsafe trait Trivial {}
 unsafe impl Trivial for i32 {}
 unsafe impl Trivial for u32 {}
@@ -307,12 +330,15 @@ unsafe impl<'a, P: Proxy + Unmarshal<'a>, T: MessageBody + Unmarshal<'a>> Unmars
     }
 }
 
+#[doc(hidden)]
 pub unsafe trait HasRequests<'a> {
     type Request: MessageEnum<'a>;
 }
+#[doc(hidden)]
 pub unsafe trait HasEvents<'a> {
     type Event: MessageEnum<'a>;
 }
+#[doc(hidden)]
 pub unsafe trait Proxy: Copy + Debug {
     fn new(object: Object) -> Self;
     fn id(self) -> Object;
@@ -325,8 +351,11 @@ pub unsafe trait Proxy: Copy + Debug {
 unsafe impl<P: Proxy> Trivial for Option<P> {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Information of an interface
 pub struct Interface {
+    /// Interface version
     pub version: u32,
+    /// Interface name
     pub name: &'static str,
 }
 
@@ -337,6 +366,7 @@ impl Display for Interface {
 }
 
 #[cfg(feature = "std")]
+/// Get UNIX domain stream socket path from environment variables
 pub fn socket_path_from_env() -> PathBuf {
     unsafe extern "C" {
         fn getuid() -> c_int;
@@ -355,21 +385,31 @@ pub fn socket_path_from_env() -> PathBuf {
 const ID_SPACE_MASK: u32 = 0xff00_0000;
 
 #[derive(Error, Debug)]
+/// Errors of protocol violation by the peer
 pub enum ProtocolError {
+    /// Id is not desely allocated
     #[error("IDs not densely packed: {0:?}")]
     IdNotDense(Object),
+    /// Id exceeds the limitation of id space. Either overflow or underflow
     #[error("ID overflow: {0:?}")]
     IdOverflow(Object),
+    /// Allocate an id twice
     #[error("ID duplicated: {0:?}")]
     DuplicateId(Object),
+    /// Error occurs when unmarshal
     #[error(transparent)]
     Unmarshal(#[from] unmarshal::Error),
+    ///
     #[error("unknown object: {0:?}")]
     UnknownObject(Object),
+    ///
     #[error("unknown opcode {opcode} for {interface}(opcode)")]
     UnknownOpcode {
+        /// object id
         object: Object,
+        ///
         interface: Interface,
+        ///
         opcode: u16,
     },
 }

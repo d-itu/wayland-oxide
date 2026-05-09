@@ -1,3 +1,5 @@
+//! Items used by a server.
+
 use core::mem;
 
 use crate::{
@@ -6,7 +8,9 @@ use crate::{
     buffer::Buffer,
 };
 
+/// Dispatch requests from client.
 pub trait Dispatch<P: Proxy + for<'a> HasRequests<'a>>: 'static {
+    /// Called when a request is processed
     fn dispatch(
         &mut self,
         arena: &mut Arena<Self>,
@@ -15,6 +19,7 @@ pub trait Dispatch<P: Proxy + for<'a> HasRequests<'a>>: 'static {
     ) -> Result<(), ProtocolError>;
 }
 
+#[doc(hidden)]
 #[repr(transparent)]
 pub struct Dispatcher<D: ?Sized>(D);
 
@@ -33,25 +38,30 @@ impl<D: Dispatch<P> + 'static, P: Proxy + for<'a> HasRequests<'a>> HasVTable<P, 
     };
 }
 
+/// Server side wrapper of [`arena::Arena`]
 #[repr(transparent)]
 pub struct Arena<D: 'static + ?Sized>(arena::Arena<Dispatcher<D>>);
 
 impl<D: 'static> Arena<D> {
+    /// Create an empty allocator
     pub fn new() -> Self {
         Self(arena::Arena::new())
     }
+    /// Create an new id.
     pub fn new_id<P: Proxy>(&mut self) -> P
     where
         Dispatcher<D>: HasVTable<P, Dispatcher<D>>,
     {
         self.0.server_new_id()
     }
+    /// Record an id allocated by client.
     pub fn receive_id<P: Proxy>(&mut self, object: P) -> Result<(), ProtocolError>
     where
         Dispatcher<D>: HasVTable<P, Dispatcher<D>>,
     {
         self.0.receive_client_id(object)
     }
+    /// Decode and dispatch all the messages in the buffer.
     pub fn dispatch<'a>(
         &mut self,
         dispatcher: &mut D,
@@ -60,6 +70,7 @@ impl<D: 'static> Arena<D> {
         self.0
             .dispatch(unsafe { mem::transmute(dispatcher) }, buffer)
     }
+    /// Delete an id.
     pub fn drop<Handle: DropHandle>(&mut self, handle: Handle) -> Result<(), ProtocolError> {
         handle.server_drop(&mut self.0)
     }

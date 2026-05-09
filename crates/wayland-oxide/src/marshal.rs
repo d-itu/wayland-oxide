@@ -1,3 +1,5 @@
+//! Items used for encoding messages
+
 use core::{
     marker::PhantomData,
     mem::{self, MaybeUninit},
@@ -7,11 +9,19 @@ use core::{
 use alloc::{boxed::Box, vec::Vec};
 use tuplez::{Tuple, Unit};
 
+/// Types can be encoded to a message buffer.
 pub unsafe trait Marshal {
+    /// Calculate byte size of a message. Size is used for allocating message buffer.
     fn calc_size(&self) -> usize;
+    /// Marshal to a [`Writer`].
+    ///
+    /// # Safety
+    ///
+    /// Caller should ensure internal pointer of `writer` points to a buffer with capacity not smaller than `self.calc_size()`
     unsafe fn marshal(&self, writer: &mut Writer);
 }
 
+///
 #[derive(Clone, Copy)]
 pub struct Writer<'a> {
     ptr: *mut u8,
@@ -19,6 +29,7 @@ pub struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
+    /// Create a writer from buffer.
     pub const fn new(buf: &'a mut [MaybeUninit<u8>]) -> Self {
         Self {
             ptr: buf.as_mut_ptr() as _,
@@ -53,6 +64,7 @@ impl Writer<'_> {
             ))
         }
     }
+    ///
     pub unsafe fn write<T: Marshal + ?Sized>(&mut self, value: &T) {
         unsafe {
             value.marshal(self);
@@ -82,7 +94,9 @@ unsafe impl<X: Marshal, Xs: Marshal> Marshal for Tuple<X, Xs> {
     }
 }
 
+///
 pub trait MarshalExt: Marshal {
+    /// Returns a `Box<[u8]>` of encoded data
     fn marshal_to_boxed_slice(&self) -> Box<[u8]> {
         let size = self.calc_size();
         let mut buf = Box::new_uninit_slice(size);
@@ -91,6 +105,7 @@ pub trait MarshalExt: Marshal {
             buf.assume_init()
         }
     }
+    /// Write encoded message to a `Vec<u8>`
     fn marshal_to(&self, vec: &mut Vec<u8>) {
         let size = self.calc_size();
         vec.reserve(size);

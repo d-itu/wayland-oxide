@@ -18,14 +18,18 @@ pub struct VTable<D: 'static + ?Sized> {
     pub dispatch: &'static DispatchFn<D>,
 }
 
+#[doc(hidden)]
 pub struct Arena<D: 'static + ?Sized> {
     client_allocated: Vec<Option<&'static VTable<D>>>,
     server_allocated: Vec<Option<&'static VTable<D>>>,
     reusable: Vec<Object>,
 }
 
+/// Type can be used to call [`crate::client::Arena::drop`] or [`crate::server::Arena::drop`]
 pub trait DropHandle {
+    /// drop function used by clients
     fn client_drop<D>(self, arena: &mut Arena<D>) -> Result<(), ProtocolError>;
+    /// drop function used by servers
     fn server_drop<D>(self, arena: &mut Arena<D>) -> Result<(), ProtocolError>;
 }
 impl DropHandle for u32 {

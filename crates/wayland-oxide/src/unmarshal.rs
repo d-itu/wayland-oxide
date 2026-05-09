@@ -1,3 +1,5 @@
+//! Items used for decoding messages
+
 use core::{
     marker::PhantomData,
     mem::{self, MaybeUninit},
@@ -6,21 +8,28 @@ use core::{
 
 use thiserror::Error;
 
+/// Errors may occur when decoding
 #[derive(Error, Debug)]
 pub enum Error {
+    ///
     #[error("not enough data")]
     NotEnoughData,
 
+    /// Null object when an object is not optional
     #[error("null object")]
     NullObject,
 }
 
+///
 pub type Result<T> = result::Result<T, Error>;
 
+///
 pub unsafe trait Unmarshal<'a>: Sized {
+    ///
     fn unmarshal(reader: &mut Reader<'a>) -> Result<Self>;
 }
 
+///
 #[derive(Clone, Copy)]
 pub struct Reader<'a> {
     buf: &'a [u8],
@@ -39,9 +48,11 @@ impl<'a> Into<&'a [u8]> for Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    /// Create a reader from a buffer of encoded messages.
     pub const fn new(buf: &'a [u8]) -> Self {
         Self { buf }
     }
+    /// Returns buffer of remaining undecoded data.
     pub const fn into_inner(self) -> &'a [u8] {
         self.buf
     }
@@ -72,11 +83,13 @@ impl<'a> Reader<'a> {
             Ok(value.assume_init())
         }
     }
+    /// Decode a type implementing [`Unmarshal`] and move the begining pointer of the internal buffer.
     pub fn read<T: Unmarshal<'a>>(&mut self) -> Result<T> {
         T::unmarshal(self)
     }
 }
 
+/// Unparsed data of type `T`
 #[repr(transparent)]
 pub struct Lazy<'a, T> {
     reader: Reader<'a>,
@@ -84,12 +97,14 @@ pub struct Lazy<'a, T> {
 }
 
 impl<'a, T> Lazy<'a, T> {
+    #[doc(hidden)]
     pub const fn new(reader: Reader<'a>) -> Self {
         Self {
             reader,
             marker: PhantomData,
         }
     }
+    /// Decode `T`.
     pub fn parse(mut self) -> Result<T>
     where
         T: Unmarshal<'a>,
