@@ -4,7 +4,7 @@ use core::{
     slice,
 };
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use tuplez::{Tuple, Unit};
 
 pub unsafe trait Marshal {
