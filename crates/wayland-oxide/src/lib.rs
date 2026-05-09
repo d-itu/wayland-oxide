@@ -16,9 +16,9 @@ pub use bitflags::bitflags;
 use thiserror::Error;
 
 pub use crate::{
-    arena::DropHandle,
     buffer::Buffer,
-    marshal::{Marshal, Complete, Writer},
+    marshal::{Complete, Marshal, Writer},
+    slab::DropHandle,
     unmarshal::{Lazy, Reader, Unmarshal},
 };
 
@@ -101,7 +101,7 @@ unsafe impl Unmarshal<'_> for Object {
     }
 }
 
-/// A new allocated id.
+/// Id of a new object whose interface is inferred from the xml
 pub type NewId = Object;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -403,7 +403,7 @@ pub enum ProtocolError {
     #[error("unknown object: {0:?}")]
     UnknownObject(Object),
     ///
-    #[error("unknown opcode {opcode} for {interface}(opcode)")]
+    #[error("unknown opcode {opcode} for {interface}({object:?})")]
     UnknownOpcode {
         /// object id
         object: Object,
@@ -414,9 +414,9 @@ pub enum ProtocolError {
     },
 }
 
-mod arena;
 pub mod client;
 pub mod server;
+mod slab;
 
 pub mod buffer;
 pub mod marshal;

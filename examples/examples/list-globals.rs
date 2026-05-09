@@ -2,8 +2,8 @@ use std::{io::Write as _, os::unix::net::UnixStream, process};
 
 use tuplez::tuple;
 use wayland_oxide::{
-    Buffer, HasEvents, Complete as _, ProtocolError,
-    client::{Arena, Dispatch},
+    Buffer, Complete as _, HasEvents, ProtocolError,
+    client::{Dispatch, Slab},
 };
 
 include!(concat!(env!("OUT_DIR"), "/wayland.rs"));
@@ -13,13 +13,13 @@ struct Dispatcher;
 impl Dispatch<WlDisplay> for Dispatcher {
     fn dispatch(
         &mut self,
-        arena: &mut Arena<Self>,
+        slab: &mut Slab<Self>,
         _: WlDisplay,
         event: <WlDisplay as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
         match event {
             wl_display::Event::Error(lazy) => panic!("{}", lazy.parse()?.message),
-            wl_display::Event::DeleteId(lazy) => arena.drop(lazy.parse()?.id),
+            wl_display::Event::DeleteId(lazy) => slab.drop(lazy.parse()?.id),
             wl_display::Event::_Unknown(_) => unreachable!(),
         }
     }
@@ -27,7 +27,7 @@ impl Dispatch<WlDisplay> for Dispatcher {
 impl Dispatch<WlRegistry> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Arena<Self>,
+        _: &mut Slab<Self>,
         _: WlRegistry,
         event: <WlRegistry as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
@@ -45,7 +45,7 @@ impl Dispatch<WlRegistry> for Dispatcher {
 impl Dispatch<WlCallback> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Arena<Self>,
+        _: &mut Slab<Self>,
         _: WlCallback,
         event: <WlCallback as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
@@ -64,10 +64,10 @@ fn main() {
     let mut buffer = Buffer::new();
     let mut dispatcher = Dispatcher;
 
-    let mut arena = Arena::<Dispatcher>::new();
-    let display: wl_display::Proxy = arena.new_id();
-    let registry = arena.new_id();
-    let callback = arena.new_id();
+    let mut slab = Slab::<Dispatcher>::new();
+    let display: wl_display::Proxy = slab.new_id();
+    let registry = slab.new_id();
+    let callback = slab.new_id();
 
     socket
         .write_all(
@@ -78,6 +78,6 @@ fn main() {
 
     loop {
         buffer.fill(&mut socket).unwrap();
-        arena.dispatch(&mut dispatcher, &mut buffer).unwrap();
+        slab.dispatch(&mut dispatcher, &mut buffer).unwrap();
     }
 }

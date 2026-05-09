@@ -10,8 +10,8 @@ use rustix::{
 };
 use tuplez::tuple;
 use wayland_oxide::{
-    Buffer, Fd, GenericNewId, HasEvents, Complete as _, ProtocolError, Proxy as _,
-    client::{Arena, Dispatch},
+    Buffer, Complete as _, Fd, GenericNewId, HasEvents, ProtocolError, Proxy as _,
+    client::{Dispatch, Slab},
 };
 
 include!(concat!(env!("OUT_DIR"), "/wayland.rs"));
@@ -39,13 +39,13 @@ struct Dispatcher {
 impl Dispatch<WlDisplay> for Dispatcher {
     fn dispatch(
         &mut self,
-        arena: &mut Arena<Self>,
+        slab: &mut Slab<Self>,
         _: WlDisplay,
         event: <WlDisplay as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
         match event {
             wl_display::Event::Error(lazy) => panic!("{}", lazy.parse()?.message),
-            wl_display::Event::DeleteId(lazy) => arena.drop(lazy.parse()?.id),
+            wl_display::Event::DeleteId(lazy) => slab.drop(lazy.parse()?.id),
             wl_display::Event::_Unknown(_) => unreachable!(),
         }
     }
@@ -53,7 +53,7 @@ impl Dispatch<WlDisplay> for Dispatcher {
 impl Dispatch<WlRegistry> for Dispatcher {
     fn dispatch(
         &mut self,
-        arena: &mut Arena<Self>,
+        slab: &mut Slab<Self>,
         registry: WlRegistry,
         event: <WlRegistry as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
@@ -66,7 +66,7 @@ impl Dispatch<WlRegistry> for Dispatcher {
                 } = lazy.parse()?;
                 match interface {
                     "xdg_wm_base" => {
-                        let object = arena.new_id();
+                        let object = slab.new_id();
                         self.globals.xdg_wm_base = Some(object);
                         registry
                             .bind(
@@ -80,7 +80,7 @@ impl Dispatch<WlRegistry> for Dispatcher {
                             .marshal_to(&mut self.buffer);
                     }
                     "wl_compositor" => {
-                        let object = arena.new_id();
+                        let object = slab.new_id();
                         self.globals.wl_compositor = Some(object);
                         registry
                             .bind(
@@ -94,7 +94,7 @@ impl Dispatch<WlRegistry> for Dispatcher {
                             .marshal_to(&mut self.buffer);
                     }
                     "wl_shm" => {
-                        let object = arena.new_id();
+                        let object = slab.new_id();
                         self.globals.wl_shm = Some(object);
                         registry
                             .bind(
@@ -119,7 +119,7 @@ impl Dispatch<WlRegistry> for Dispatcher {
 impl Dispatch<XdgWmBase> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Arena<Self>,
+        _: &mut Slab<Self>,
         wm_base: XdgWmBase,
         event: <XdgWmBase as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
@@ -136,7 +136,7 @@ impl Dispatch<XdgWmBase> for Dispatcher {
 impl Dispatch<WlCallback> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Arena<Self>,
+        _: &mut Slab<Self>,
         _: WlCallback,
         event: <WlCallback as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
@@ -152,7 +152,7 @@ impl Dispatch<WlCallback> for Dispatcher {
 impl Dispatch<WlSurface> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Arena<Self>,
+        _: &mut Slab<Self>,
         _: WlSurface,
         event: <WlSurface as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
@@ -169,7 +169,7 @@ impl Dispatch<WlSurface> for Dispatcher {
 impl Dispatch<XdgSurface> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Arena<Self>,
+        _: &mut Slab<Self>,
         xdg_surface: XdgSurface,
         event: <XdgSurface as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
@@ -188,7 +188,7 @@ impl Dispatch<XdgSurface> for Dispatcher {
 impl Dispatch<XdgToplevel> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Arena<Self>,
+        _: &mut Slab<Self>,
         _: XdgToplevel,
         event: <XdgToplevel as HasEvents>::Event,
     ) -> Result<(), ProtocolError> {
@@ -214,7 +214,7 @@ macro_rules! delegate_noop {
         $(impl Dispatch<$proxy> for Dispatcher {
             fn dispatch(
                 &mut self,
-                _: &mut Arena<Self>,
+                _: &mut Slab<Self>,
                 _: $proxy,
                 _: <$proxy as HasEvents>::Event,
             ) -> Result<(), ProtocolError> {
@@ -236,10 +236,10 @@ fn main() {
     let mut buffer = Buffer::new();
     let mut dispatcher = Dispatcher::default();
 
-    let mut arena = Arena::<Dispatcher>::new();
-    let display: wl_display::Proxy = arena.new_id();
-    let registry = arena.new_id();
-    let callback = arena.new_id();
+    let mut slab = Slab::<Dispatcher>::new();
+    let display: wl_display::Proxy = slab.new_id();
+    let registry = slab.new_id();
+    let callback = slab.new_id();
 
     socket
         .write_all(
@@ -250,7 +250,7 @@ fn main() {
 
     loop {
         buffer.fill(&mut socket).unwrap();
-        arena.dispatch(&mut dispatcher, &mut buffer).unwrap();
+        slab.dispatch(&mut dispatcher, &mut buffer).unwrap();
         if dispatcher.done {
             break;
         }
@@ -263,9 +263,9 @@ fn main() {
     let xdg_wm_base = dispatcher.globals.xdg_wm_base.unwrap();
     let wl_compositor = dispatcher.globals.wl_compositor.unwrap();
 
-    let wl_surface = arena.new_id();
-    let xdg_surface = arena.new_id();
-    let toplevel = arena.new_id();
+    let wl_surface = slab.new_id();
+    let xdg_surface = slab.new_id();
+    let toplevel = slab.new_id();
 
     socket
         .write_all(
@@ -288,7 +288,7 @@ fn main() {
     };
     'outer: loop {
         buffer.fill(&mut socket).unwrap();
-        arena.dispatch(&mut dispatcher, &mut buffer).unwrap();
+        slab.dispatch(&mut dispatcher, &mut buffer).unwrap();
         socket
             .write_all(dispatcher.buffer.drain(..).as_slice())
             .unwrap();
@@ -303,8 +303,8 @@ fn main() {
                     let [width, height] = size;
                     let len = width * height * 4;
                     let shm = dispatcher.globals.wl_shm.unwrap();
-                    let pool = arena.new_id();
-                    let buffer = arena.new_id();
+                    let pool = slab.new_id();
+                    let buffer = slab.new_id();
                     let fd = rustix::fs::memfd_create(c"", MemfdFlags::empty()).unwrap();
                     rustix::fs::ftruncate(&fd, len as _).unwrap();
 

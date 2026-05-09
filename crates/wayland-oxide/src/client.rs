@@ -4,8 +4,8 @@ use core::mem;
 
 use crate::{
     HasEvents, MessageEnum, ProtocolError, Proxy,
-    arena::{self, DispatchFn, DropHandle, HasVTable, VTable},
     buffer::Buffer,
+    slab::{self, DispatchFn, DropHandle, HasVTable, VTable},
 };
 
 /// Event dispatcher
@@ -13,7 +13,7 @@ pub trait Dispatch<P: Proxy + for<'a> HasEvents<'a>>: 'static {
     /// Handles an event, event payload is decoded lazily
     fn dispatch(
         &mut self,
-        arena: &mut Arena<Self>,
+        slab: &mut Slab<Self>,
         object: P,
         event: <P as HasEvents>::Event,
     ) -> Result<(), ProtocolError>;
@@ -28,9 +28,9 @@ impl<D: Dispatch<P> + 'static, P: Proxy + for<'a> HasEvents<'a>> HasVTable<P, Di
 {
     const V_TABLE: VTable<Dispatcher<D>> = VTable {
         interface: &P::INTERFACE,
-        dispatch: &((|dispatch, arena, object, opcode, reader| {
+        dispatch: &((|dispatch, slab, object, opcode, reader| {
             dispatch.0.dispatch(
-                unsafe { mem::transmute(arena) },
+                unsafe { mem::transmute(slab) },
                 Proxy::new(object),
                 MessageEnum::new(opcode, reader),
             )
@@ -39,13 +39,13 @@ impl<D: Dispatch<P> + 'static, P: Proxy + for<'a> HasEvents<'a>> HasVTable<P, Di
 }
 
 #[repr(transparent)]
-/// Client side Wrapper of [`arena::Arena`]
-pub struct Arena<D: 'static + ?Sized>(arena::Arena<Dispatcher<D>>);
+/// Client side Wrapper of [`slab::Slab`]
+pub struct Slab<D: 'static + ?Sized>(slab::Slab<Dispatcher<D>>);
 
-impl<D: 'static> Arena<D> {
+impl<D: 'static> Slab<D> {
     /// Create an empty instance.
     pub fn new() -> Self {
-        Self(arena::Arena::new())
+        Self(slab::Slab::new())
     }
     /// Allocate new-id
     pub fn new_id<P: Proxy>(&mut self) -> P
