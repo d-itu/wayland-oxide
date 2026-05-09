@@ -2,7 +2,7 @@ use std::{io::Write as _, os::unix::net::UnixStream, process};
 
 use tuplez::tuple;
 use wayland_oxide::{
-    Buffer, HasEvents, MarshalExt as _, ProtocolError,
+    Buffer, HasEvents, Complete as _, ProtocolError,
     client::{Arena, Dispatch},
 };
 

@@ -10,7 +10,7 @@ use rustix::{
 };
 use tuplez::tuple;
 use wayland_oxide::{
-    Buffer, Fd, GenericNewId, HasEvents, MarshalExt as _, ProtocolError, Proxy as _,
+    Buffer, Fd, GenericNewId, HasEvents, Complete as _, ProtocolError, Proxy as _,
     client::{Arena, Dispatch},
 };
 

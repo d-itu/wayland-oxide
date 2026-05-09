@@ -9,6 +9,8 @@ use core::{
 use alloc::{boxed::Box, vec::Vec};
 use tuplez::{Tuple, Unit};
 
+use crate::{Message, MessageBody};
+
 /// Types can be encoded to a message buffer.
 pub unsafe trait Marshal {
     /// Calculate byte size of a message. Size is used for allocating message buffer.
@@ -94,8 +96,8 @@ unsafe impl<X: Marshal, Xs: Marshal> Marshal for Tuple<X, Xs> {
     }
 }
 
-///
-pub trait MarshalExt: Marshal {
+/// A type contains zero or more complete messages.
+pub trait Complete: Marshal {
     /// Returns a `Box<[u8]>` of encoded data
     fn marshal_to_boxed_slice(&self) -> Box<[u8]> {
         let size = self.calc_size();
@@ -116,4 +118,6 @@ pub trait MarshalExt: Marshal {
     }
 }
 
-impl<T: Marshal> MarshalExt for T {}
+impl<P: Marshal, T: Marshal + MessageBody> Complete for Message<P, T> {}
+impl Complete for Unit {}
+impl<X: Complete, Xs: Complete> Complete for Tuple<X, Xs> {}

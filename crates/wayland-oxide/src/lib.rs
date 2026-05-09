@@ -18,7 +18,7 @@ use thiserror::Error;
 pub use crate::{
     arena::DropHandle,
     buffer::Buffer,
-    marshal::{Marshal, MarshalExt, Writer},
+    marshal::{Marshal, Complete, Writer},
     unmarshal::{Lazy, Reader, Unmarshal},
 };
 
