@@ -38,8 +38,8 @@ impl<D: Dispatch<P> + 'static, P: Proxy + for<'a> HasEvents<'a>> HasVTable<P, Di
     };
 }
 
+/// Slab allocator of object data.
 #[repr(transparent)]
-/// Client side Wrapper of [`slab::Slab`]
 pub struct Slab<D: 'static + ?Sized>(slab::Slab<Dispatcher<D>>);
 
 impl<D: 'static> Slab<D> {

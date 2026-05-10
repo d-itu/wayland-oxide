@@ -3,10 +3,11 @@ name = "wayland-oxide"
 version.workspace = true
 edition.workspace = true
 description = "Pure rust wayland implementation supporting no_std and io-uring"
+license.workspace = true
 categories = ["no-std"]
 
 [dependencies]
-bitflags = { version = "2.11.1", default-features = false, features = [] }
+bitflags = { version = "2.11.1", default-features = false }
 thiserror = { version = "2.0.18", default-features = false }
 tuplez = { version = "0.15.0", default-features = false }
 
