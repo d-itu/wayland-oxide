@@ -3,6 +3,7 @@ name = "wayland-oxide-scanner"
 version.workspace = true
 edition.workspace = true
 description = "Generate code for `wayland-oxide` from xml"
+repository.workspace = true
 license.workspace = true
 
 [dependencies]

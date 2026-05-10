@@ -9,8 +9,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/d-itu/wayland-oxide"
 license = "MIT"
 
 [workspace.dependencies]
-wayland-oxide = { path = "crates/wayland-oxide" }
-wayland-oxide-scanner = { path = "crates/scanner" }
+wayland-oxide = { path = "crates/wayland-oxide", version = "0.1.0" }
+wayland-oxide-scanner = { path = "crates/scanner", version = "0.1.0" }
