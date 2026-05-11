@@ -1,259 +1,277 @@
-use core::{cmp::Ordering, marker::PhantomData, num::NonZero, ptr};
+//!
+
+use core::{cmp::Ordering, hint, marker::PhantomData, mem};
 
 use alloc::{vec, vec::Vec};
+use thiserror::Error;
 
-use crate::{Buffer, Header, Interface, Object, ProtocolError, Proxy, Reader, unmarshal};
+use crate::Object;
 
-use super::ID_SPACE_MASK;
-
-pub type DispatchFn<D> = fn(&mut D, &mut Slab<D>, Object, u16, Reader) -> Result<(), ProtocolError>;
-
-pub trait HasVTable<P, D: 'static> {
-    const V_TABLE: VTable<D>;
-}
-
-pub struct VTable<D: 'static + ?Sized> {
-    pub interface: &'static Interface,
-    pub dispatch: &'static DispatchFn<D>,
-}
-
-/// A Tagged union of `value` and `next_free` represented by `usize`.
-/// `value` is 8-byte (or 4-byte on 32-bit machines) aligned pointer, so we can use lsb as tag.
-/// Entry is `value` when lsb is 1; Entry is `next_free` when lsb is 0.
 ///
-/// Moreover, `Vec` len will not exceeds u32 limit, so we use high 32 bits to store `next_free`
-struct Entry<D: ?Sized> {
-    repr: u64,
-    marker: PhantomData<D>,
-}
-
-impl<D> Clone for Entry<D> {
-    fn clone(&self) -> Self {
-        Self::new(self.repr)
+#[derive(Clone, Copy)]
+pub struct Handle(u32);
+impl From<()> for Handle {
+    fn from(_: ()) -> Self {
+        Self(ID_SPACE_MASK)
     }
 }
-impl<D> Copy for Entry<D> {}
 
-impl<D> Entry<D> {
-    fn new(repr: u64) -> Self {
+///
+pub trait Entry: Sized {
+    ///
+    type Value: Into<Self>;
+
+    ///
+    fn vacant(handle: Handle) -> Self;
+
+    ///
+    unsafe fn vacant_unchecked(&self) -> Handle;
+
+    ///
+    fn is_value(&self) -> bool;
+
+    ///
+    unsafe fn take_unchecked(self) -> Self::Value;
+
+    ///
+    fn get_mut(&mut self) -> Option<&mut Self::Value>;
+
+    ///
+    fn get(&self) -> Option<&Self::Value>;
+}
+
+///
+pub enum TaggedUnion<V> {
+    ///
+    Occupied(V),
+    ///
+    Vacant(Handle),
+}
+impl<V> From<V> for TaggedUnion<V> {
+    fn from(value: V) -> Self {
+        Self::Occupied(value)
+    }
+}
+impl<V> Entry for TaggedUnion<V> {
+    type Value = V;
+
+    fn vacant(handle: Handle) -> Self {
+        Self::Vacant(handle)
+    }
+
+    unsafe fn vacant_unchecked(&self) -> Handle {
+        match self {
+            TaggedUnion::Occupied(_) => unsafe { hint::unreachable_unchecked() },
+            &TaggedUnion::Vacant(handle) => handle,
+        }
+    }
+
+    fn is_value(&self) -> bool {
+        match self {
+            TaggedUnion::Occupied(_) => true,
+            TaggedUnion::Vacant(_) => false,
+        }
+    }
+
+    unsafe fn take_unchecked(self) -> Self::Value {
+        match self {
+            TaggedUnion::Occupied(x) => x,
+            TaggedUnion::Vacant(_) => unsafe { hint::unreachable_unchecked() },
+        }
+    }
+
+    fn get_mut(&mut self) -> Option<&mut Self::Value> {
+        match self {
+            TaggedUnion::Occupied(x) => Some(x),
+            TaggedUnion::Vacant(_) => None,
+        }
+    }
+    fn get(&self) -> Option<&Self::Value> {
+        match self {
+            TaggedUnion::Occupied(x) => Some(x),
+            TaggedUnion::Vacant(_) => None,
+        }
+    }
+}
+
+const ID_SPACE_MASK: u32 = 0xff00_0000;
+
+///
+pub trait Side {
+    #[doc(hidden)]
+    const VEC_OFFSET: usize;
+    #[doc(hidden)]
+    const SLOT_OFFSET: usize;
+    #[doc(hidden)]
+    type Peer: Side;
+}
+
+///
+pub struct Client;
+///
+pub struct Server;
+
+impl Side for Client {
+    const VEC_OFFSET: usize = 0;
+    const SLOT_OFFSET: usize = 1;
+    type Peer = Server;
+}
+impl Side for Server {
+    const VEC_OFFSET: usize = 1;
+    const SLOT_OFFSET: usize = ID_SPACE_MASK as _;
+    type Peer = Client;
+}
+
+///
+pub struct Slab<E, S> {
+    /// `storage[0]` -> client
+    ///
+    /// `storage[1]` -> server
+    storage: [Vec<E>; 2],
+    next_free: usize,
+    marker: PhantomData<S>,
+}
+
+impl<E, S> Slab<E, S> {
+    ///
+    pub fn new() -> Self {
         Self {
-            repr,
+            storage: [const { vec![] }; 2],
+            next_free: 0,
             marker: PhantomData,
         }
     }
-    fn value(self) -> Option<&'static VTable<D>> {
-        (self.repr & 1 == 0).then(|| unsafe { self.value_unchecked() })
-    }
-    unsafe fn value_unchecked(self) -> &'static VTable<D> {
-        unsafe { ptr::with_exposed_provenance::<VTable<D>>(self.repr as usize).as_ref_unchecked() }
-    }
-    fn next_free(self) -> usize {
-        (self.repr >> 32) as _
-    }
-    fn from_value(value: &'static VTable<D>) -> Self {
-        let repr = value as *const _ as usize as _;
-        debug_assert!(repr & 1 == 0);
-        Self::new(repr)
-    }
-    fn from_next_free(index: usize) -> Self {
-        debug_assert!(index <= ID_SPACE_MASK as _);
-        Self::new((index as u64) << 32 | 1)
-    }
 }
 
-/// Slab allocator of object data.
-pub struct Slab<D: 'static + ?Sized> {
-    client_allocated: Vec<Entry<D>>,
-    server_allocated: Vec<Entry<D>>,
-    next: usize,
-}
-
-fn push<D>(entries: &mut Vec<Entry<D>>, next: &mut usize, value: &'static VTable<D>) {
-    let index = *next;
-    if index == entries.len() {
-        entries.push(Entry::from_value(value));
-        *next += 1;
-    } else {
-        let entry = unsafe { entries.get_unchecked_mut(index) };
-        *next = entry.next_free();
-        *entry = Entry::from_value(value);
-    }
-}
-fn try_remove<D>(
-    entries: &mut Vec<Entry<D>>,
-    next: &mut usize,
+fn slab_try_remove<E: Entry>(
+    entries: &mut Vec<E>,
+    next_free: &mut usize,
     index: usize,
-) -> Option<&'static VTable<D>> {
-    if let Some(entry) = entries.get_mut(index) {
-        if let Some(value) = entry.value() {
-            *entry = Entry::from_next_free(*next);
-            *next = index;
-            return Some(value);
-        }
-    }
-    None
-}
-fn vec_try_remove<D>(entries: &mut Vec<Entry<D>>, index: usize) -> Option<&'static VTable<D>> {
-    if let Some(entry) = entries.get_mut(index) {
-        if let Some(value) = entry.value() {
-            return Some(value);
-        }
+) -> Option<E::Value> {
+    if let Some(entry) = entries.get_mut(index)
+        && entry.is_value()
+    {
+        let value =
+            unsafe { mem::replace(entry, E::vacant(Handle(*next_free as _))).take_unchecked() };
+        *next_free = index;
+        return Some(value);
     }
     None
 }
 
-impl<D: 'static> Slab<D> {
-    pub fn new() -> Self {
-        Self {
-            client_allocated: vec![],
-            server_allocated: vec![],
-            next: 0,
+impl<E: Entry, S: Side> Slab<E, S> {
+    fn push(&mut self, value: E::Value) {
+        let index = self.next_free;
+        let entries = unsafe { self.storage.get_unchecked_mut(S::VEC_OFFSET) };
+
+        if index == entries.len() {
+            entries.push(value.into());
+            self.next_free += 1;
+        } else {
+            let entry = unsafe { entries.get_unchecked_mut(index) };
+            self.next_free = unsafe { entry.vacant_unchecked().0 } as usize;
+            *entry = value.into();
         }
     }
-    pub fn client_new_id<P: Proxy>(&mut self) -> P
-    where
-        D: HasVTable<P, D>,
-    {
-        let id = self.next as u32 + 1;
-        push(&mut self.client_allocated, &mut self.next, &D::V_TABLE);
-        P::new(unsafe { Object::from_u32(id) })
+    ///
+    pub fn insert(&mut self, data: E::Value) -> Object {
+        let id = self.next_free + S::SLOT_OFFSET;
+        self.push(data);
+        unsafe { Object::from_u32(id as _) }
     }
-    pub fn server_new_id<P: Proxy>(&mut self) -> P
-    where
-        D: HasVTable<P, D>,
-    {
-        let id = self.next as u32 + ID_SPACE_MASK;
-        push(&mut self.server_allocated, &mut self.next, &D::V_TABLE);
-        P::new(unsafe { Object::from_u32(id) })
-    }
-
-    fn receive_id<P>(id: Object, index: usize, vec: &mut Vec<Entry<D>>) -> Result<(), ProtocolError>
-    where
-        D: HasVTable<P, D>,
-    {
+    ///
+    pub fn receive(&mut self, object: Object, data: E::Value) -> Result<(), Error> {
+        let id = object.as_u32();
+        let index = id as usize - S::Peer::SLOT_OFFSET;
+        let vec = unsafe { self.storage.get_unchecked_mut(S::Peer::VEC_OFFSET) };
         match index.cmp(&vec.len()) {
             Ordering::Less => {
                 let entry = unsafe { vec.get_unchecked_mut(index) };
-                if entry.value().is_some() {
-                    Err(ProtocolError::DuplicateId(id))?
+                if entry.is_value() {
+                    Err(Error::DuplicateId(object))?
                 }
-                *entry = Entry::from_value(&D::V_TABLE)
+                *entry = data.into()
             }
-            Ordering::Equal => vec.push(Entry::from_value(&D::V_TABLE)),
-            Ordering::Greater => Err(ProtocolError::IdNotDense(id))?,
+            Ordering::Equal => vec.push(data.into()),
+            Ordering::Greater => Err(Error::IdNotDense(object))?,
         }
         Ok(())
     }
-    pub fn receive_server_id<P: Proxy>(&mut self, object: P) -> Result<(), ProtocolError>
-    where
-        D: HasVTable<P, D>,
-    {
-        let id = object.id();
-        Self::receive_id(
-            id,
-            (id.as_u32() - ID_SPACE_MASK) as usize,
-            &mut self.client_allocated,
-        )
-    }
-    pub fn receive_client_id<P: Proxy>(&mut self, object: P) -> Result<(), ProtocolError>
-    where
-        D: HasVTable<P, D>,
-    {
-        let id = object.id();
-        Self::receive_id(id, id.as_u32() as usize - 1, &mut self.client_allocated)
-    }
-    fn client_drop_object(&mut self, object: Object) -> Result<(), ProtocolError> {
+    ///
+    pub fn get(&mut self, object: Object) -> Option<&E::Value> {
         let id = object.as_u32();
-        let index = id as usize - 1;
         if id < ID_SPACE_MASK {
-            try_remove(&mut self.client_allocated, &mut self.next, index)
+            let index = id as usize - 1;
+            unsafe { self.storage.get_unchecked(Client::VEC_OFFSET) }.get(index)
         } else {
-            vec_try_remove(&mut self.server_allocated, index)
+            let index = (id - ID_SPACE_MASK) as usize;
+            unsafe { self.storage.get_unchecked(Server::VEC_OFFSET) }.get(index)
         }
-        .map(|_| {})
-        .ok_or_else(|| ProtocolError::UnknownObject(object))
+        .and_then(E::get)
     }
-    fn server_drop_object(&mut self, object: Object) -> Result<(), ProtocolError> {
+    ///
+    pub fn get_mut(&mut self, object: Object) -> Option<&mut E::Value> {
         let id = object.as_u32();
-        let index = (id - ID_SPACE_MASK) as usize;
         if id < ID_SPACE_MASK {
-            vec_try_remove(&mut self.client_allocated, index)
+            let index = id as usize - 1;
+            unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) }.get_mut(index)
         } else {
-            try_remove(&mut self.server_allocated, &mut self.next, index)
+            let index = (id - ID_SPACE_MASK) as usize;
+            unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) }.get_mut(index)
         }
-        .map(|_| {})
-        .ok_or_else(|| ProtocolError::UnknownObject(object))
+        .and_then(E::get_mut)
     }
-    fn get(&self, id: Object) -> Option<&'static VTable<D>> {
-        if id.as_u32() < ID_SPACE_MASK {
-            self.client_allocated.get(id.as_u32() as usize - 1)
+}
+impl<E: Entry> Slab<E, Client> {
+    ///
+    pub fn remove(&mut self, object: Object) -> Option<E::Value> {
+        let id = object.as_u32();
+        if id < ID_SPACE_MASK {
+            let index = id as usize - 1;
+            slab_try_remove(
+                unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) },
+                &mut self.next_free,
+                index,
+            )
         } else {
-            self.server_allocated
-                .get((id.as_u32() - ID_SPACE_MASK) as usize)
+            let index = (id - ID_SPACE_MASK) as usize;
+            slab_try_remove(
+                unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) },
+                &mut 0,
+                index,
+            )
         }
-        .copied()
-        .and_then(Entry::value)
     }
-    pub fn dispatch<'a>(
-        &mut self,
-        dispatcher: &mut D,
-        buffer: &mut Buffer,
-    ) -> Result<(), ProtocolError> {
-        let mut reader: Reader = buffer.filled().into();
-        let n = loop {
-            let Header {
-                object,
-                opcode,
-                size,
-            }: Header = match reader.read() {
-                Ok(x) => x,
-                Err(unmarshal::Error::NotEnoughData) => break reader.into_inner().len(),
-                Err(e) => Err(e)?,
-            };
-            let size = size - 8;
-            let (_, remaining) = match reader.into_inner().split_at_checked(size as _) {
-                Some(x) => x,
-                None => break reader.into_inner().len() + 8,
-            };
-            let dispatch = self
-                .get(object)
-                .ok_or_else(|| ProtocolError::UnknownObject(object))?
-                .dispatch;
-            dispatch(dispatcher, self, object, opcode, reader)?;
-
-            reader = remaining.into();
-        };
-        buffer.end(n);
-        Ok(())
+}
+impl<E: Entry> Slab<E, Server> {
+    ///
+    pub fn remove(&mut self, object: Object) -> Option<E::Value> {
+        let id = object.as_u32();
+        if id < ID_SPACE_MASK {
+            let index = id as usize - 1;
+            slab_try_remove(
+                unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) },
+                &mut 0,
+                index,
+            )
+        } else {
+            let index = (id - ID_SPACE_MASK) as usize;
+            slab_try_remove(
+                unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) },
+                &mut self.next_free,
+                index,
+            )
+        }
     }
 }
 
-/// Type can be used to call [`crate::client::Slab::drop`] or [`crate::server::Slab::drop`]
-pub trait DropHandle {
-    /// drop function used by clients
-    fn client_drop<D>(self, slab: &mut Slab<D>) -> Result<(), ProtocolError>;
-    /// drop function used by servers
-    fn server_drop<D>(self, slab: &mut Slab<D>) -> Result<(), ProtocolError>;
-}
-impl DropHandle for u32 {
-    fn client_drop<D>(self, slab: &mut Slab<D>) -> Result<(), ProtocolError> {
-        if let Some(id) = NonZero::new(self) {
-            slab.client_drop_object(Object(id))?
-        }
-        Ok(())
-    }
-    fn server_drop<D>(self, slab: &mut Slab<D>) -> Result<(), ProtocolError> {
-        if let Some(id) = NonZero::new(self) {
-            slab.server_drop_object(Object(id))?
-        }
-        Ok(())
-    }
-}
-impl<P: Proxy> DropHandle for P {
-    fn client_drop<D>(self, slab: &mut Slab<D>) -> Result<(), ProtocolError> {
-        slab.client_drop_object(self.id())
-    }
-    fn server_drop<D>(self, slab: &mut Slab<D>) -> Result<(), ProtocolError> {
-        slab.server_drop_object(self.id())
-    }
+#[derive(Error, Debug)]
+/// Errors of protocol violation by the peer
+pub enum Error {
+    /// Id is not desely allocated
+    #[error("IDs not densely packed: {0:?}")]
+    IdNotDense(Object),
+    /// Allocate an id twice
+    #[error("ID duplicated: {0:?}")]
+    DuplicateId(Object),
 }

@@ -57,11 +57,17 @@ impl Scanner {
         Self { pretty: true }
     }
     /// Use [`prettyplease`] to format code, default to true.
+    #[must_use]
     pub fn pretty(self, pretty: bool) -> Self {
         Self { pretty, ..self }
     }
     /// Generate code from xmls
-    pub fn generate<'a>(&self, xmls: impl IntoIterator<Item = &'a Path>, side: Side) -> String {
+    #[must_use]
+    pub fn generate<P: AsRef<Path>>(
+        &self,
+        xmls: impl IntoIterator<Item = P>,
+        side: Side,
+    ) -> String {
         let protocols = xmls
             .into_iter()
             .map(File::open)

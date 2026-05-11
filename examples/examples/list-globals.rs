@@ -1,83 +1,53 @@
 use std::{io::Write as _, os::unix::net::UnixStream, process};
 
 use tuplez::tuple;
-use wayland_oxide::{
-    Buffer, Complete as _, HasEvents, ProtocolError,
-    client::{Dispatch, Slab},
-};
+use wayland_oxide::{Buffer, Complete, MessageEnum, Object, buffer::Message};
 
 include!(concat!(env!("OUT_DIR"), "/wayland.rs"));
 
-struct Dispatcher;
-
-impl Dispatch<WlDisplay> for Dispatcher {
-    fn dispatch(
-        &mut self,
-        slab: &mut Slab<Self>,
-        _: WlDisplay,
-        event: <WlDisplay as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
-        match event {
-            wl_display::Event::Error(lazy) => panic!("{}", lazy.parse()?.message),
-            wl_display::Event::DeleteId(lazy) => slab.drop(lazy.parse()?.id),
-            wl_display::Event::_Unknown(_) => unreachable!(),
-        }
-    }
-}
-impl Dispatch<WlRegistry> for Dispatcher {
-    fn dispatch(
-        &mut self,
-        _: &mut Slab<Self>,
-        _: WlRegistry,
-        event: <WlRegistry as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
-        match event {
-            wl_registry::Event::Global(lazy) => {
-                let global = lazy.parse()?;
-                println!("{} {} v{}", global.name, global.interface, global.version)
-            }
-            wl_registry::Event::GlobalRemove(_) => {}
-            wl_registry::Event::_Unknown(_) => unreachable!(),
-        }
-        Ok(())
-    }
-}
-impl Dispatch<WlCallback> for Dispatcher {
-    fn dispatch(
-        &mut self,
-        _: &mut Slab<Self>,
-        _: WlCallback,
-        event: <WlCallback as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
-        match event {
-            wl_callback::Event::Done(lazy) => {
-                lazy.parse()?;
-                process::exit(0);
-            }
-            wl_callback::Event::_Unknown(_) => unreachable!(),
-        }
-    }
-}
+const DISPLAY: WlDisplay = WlDisplay::new(Object::try_from_u32(1).unwrap());
+const REGISTRY: WlRegistry = WlRegistry::new(Object::try_from_u32(2).unwrap());
+const CALLBACK: WlCallback = WlCallback::new(Object::try_from_u32(3).unwrap());
 
 fn main() {
     let mut socket = UnixStream::connect(&wayland_oxide::socket_path_from_env()).unwrap();
+
+    let msg =
+        tuple!(DISPLAY.get_registry(REGISTRY), DISPLAY.sync(CALLBACK)).marshal_to_boxed_slice();
+    socket.write_all(&msg).unwrap();
+
     let mut buffer = Buffer::new();
-    let mut dispatcher = Dispatcher;
-
-    let mut slab = Slab::<Dispatcher>::new();
-    let display: wl_display::Proxy = slab.new_id();
-    let registry = slab.new_id();
-    let callback = slab.new_id();
-
-    socket
-        .write_all(
-            &tuple!(display.get_registry(registry), display.sync(callback))
-                .marshal_to_boxed_slice(),
-        )
-        .unwrap();
-
     loop {
         buffer.fill(&mut socket).unwrap();
-        slab.dispatch(&mut dispatcher, &mut buffer).unwrap();
+        for Message {
+            object,
+            opcode,
+            reader,
+        } in buffer.drain()
+        {
+            match object {
+                1 => match wl_display::Event::new(opcode, reader) {
+                    wl_display::Event::Error(lazy) => panic!("{}", lazy.parse().unwrap().message),
+                    wl_display::Event::DeleteId(_) => {}
+                    wl_display::Event::_Unknown(_) => unreachable!(),
+                },
+                2 => match wl_registry::Event::new(opcode, reader) {
+                    wl_registry::Event::Global(lazy) => match lazy.parse().unwrap() {
+                        wl_registry::Global {
+                            name,
+                            interface,
+                            version,
+                        } => println!("{} {} v{}", name, interface, version),
+                    },
+                    wl_registry::Event::GlobalRemove(_) => {}
+                    wl_registry::Event::_Unknown(_) => unreachable!(),
+                },
+                3 => match wl_callback::Event::new(opcode, reader) {
+                    wl_callback::Event::Done(_) => process::exit(0),
+                    wl_callback::Event::_Unknown(_) => unreachable!(),
+                },
+                _ => unreachable!(),
+            }
+        }
     }
 }

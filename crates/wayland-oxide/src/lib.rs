@@ -13,12 +13,10 @@ use core::{
 use std::{env, ffi::c_int, os::unix::ffi::OsStrExt as _, path::PathBuf};
 
 pub use bitflags::bitflags;
-use thiserror::Error;
 
 pub use crate::{
     buffer::Buffer,
     marshal::{Complete, Marshal, Writer},
-    slab::DropHandle,
     unmarshal::{Lazy, Reader, Unmarshal},
 };
 
@@ -82,19 +80,35 @@ impl Debug for Object {
 
 impl Object {
     /// Get underlying u32 data.
-    pub fn as_u32(self) -> u32 {
+    pub const fn as_u32(self) -> u32 {
         self.0.get()
     }
     /// Construct from u32. Input must not be 0
-    pub unsafe fn from_u32(x: u32) -> Self {
+    pub const unsafe fn from_u32(x: u32) -> Self {
         Self(unsafe { NonZeroU32::new_unchecked(x) })
+    }
+    /// Try to create an object from u32, return None if input is 0
+    pub const fn try_from_u32(x: u32) -> Option<Self> {
+        match NonZeroU32::new(x) {
+            Some(x) => Some(Self(x)),
+            None => None,
+        }
+    }
+}
+impl TryFrom<u32> for Object {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::try_from_u32(value).ok_or(())
     }
 }
 
 unsafe impl TrivialMarshal for Object {}
 unsafe impl Unmarshal<'_> for Object {
     fn unmarshal(reader: &mut Reader<'_>) -> unmarshal::Result<Self> {
-        let id: u32 = reader.read_trivial()?;
+        let id: u32 = reader
+            .read_trivial()
+            .ok_or(unmarshal::Error::NotEnoughData)?;
         NonZeroU32::new(id)
             .map(Object)
             .ok_or_else(|| unmarshal::Error::NullObject)
@@ -131,8 +145,12 @@ unsafe impl<'a, P: Unmarshal<'a>, O: Opcode> Unmarshal<'a> for Header<P, O> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         Ok(Self {
             object: reader.read()?,
-            opcode: reader.read_trivial()?,
-            size: reader.read_trivial()?,
+            opcode: reader
+                .read_trivial()
+                .ok_or(unmarshal::Error::NotEnoughData)?,
+            size: reader
+                .read_trivial()
+                .ok_or(unmarshal::Error::NotEnoughData)?,
         })
     }
 }
@@ -143,8 +161,9 @@ pub trait MessageBody {
     const OPCODE: Self::Opcode;
 }
 
-#[doc(hidden)]
+///
 pub trait MessageEnum<'a> {
+    ///
     fn new(opcode: u16, reader: Reader<'a>) -> Self;
 }
 
@@ -200,7 +219,7 @@ unsafe impl<T: TrivialMarshal> Marshal for T {
 }
 unsafe impl<T: TrivialUnmarshal> Unmarshal<'_> for T {
     fn unmarshal(reader: &mut Reader) -> unmarshal::Result<Self> {
-        reader.read_trivial()
+        reader.read_trivial().ok_or(unmarshal::Error::NotEnoughData)
     }
 }
 
@@ -221,8 +240,16 @@ unsafe impl Marshal for &str {
 unsafe impl<'a> Unmarshal<'a> for &'a str {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         let size = reader.read::<u32>()? as usize;
-        let res = unsafe { str::from_utf8_unchecked(reader.read_bytes(size - 1)?) };
-        reader.skip(1 + align_padding(4, size))?;
+        let res = unsafe {
+            str::from_utf8_unchecked(
+                reader
+                    .read_bytes(size - 1)
+                    .ok_or(unmarshal::Error::NotEnoughData)?,
+            )
+        };
+        reader
+            .skip(1 + align_padding(4, size))
+            .ok_or(unmarshal::Error::NotEnoughData)?;
         Ok(res)
     }
 }
@@ -246,7 +273,13 @@ unsafe impl Marshal for Option<&str> {
 unsafe impl<'a> Unmarshal<'a> for Option<&'a str> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         let size = reader.read::<u32>()? as usize;
-        Ok((size != 0).then_some(unsafe { str::from_utf8_unchecked(reader.read_bytes(size)?) }))
+        Ok((size != 0).then_some(unsafe {
+            str::from_utf8_unchecked(
+                reader
+                    .read_bytes(size)
+                    .ok_or(unmarshal::Error::NotEnoughData)?,
+            )
+        }))
     }
 }
 
@@ -287,8 +320,12 @@ unsafe impl Marshal for &[u8] {
 unsafe impl<'a> Unmarshal<'a> for &'a [u8] {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         let size = reader.read::<u32>()? as usize;
-        let res = reader.read_bytes(size)?;
-        reader.skip(align_padding(4, size))?;
+        let res = reader
+            .read_bytes(size)
+            .ok_or(unmarshal::Error::NotEnoughData)?;
+        reader
+            .skip(align_padding(4, size))
+            .ok_or(unmarshal::Error::NotEnoughData)?;
         Ok(res)
     }
 }
@@ -330,22 +367,37 @@ unsafe impl<'a, P: Proxy + Unmarshal<'a>, T: MessageBody + Unmarshal<'a>> Unmars
     }
 }
 
-#[doc(hidden)]
+/// Has a related `Request` enum
 pub unsafe trait HasRequests<'a> {
+    /// Related `Request` type
     type Request: MessageEnum<'a>;
 }
-#[doc(hidden)]
+/// Has a related `Event` enum
 pub unsafe trait HasEvents<'a> {
+    /// Related `Event` type
     type Event: MessageEnum<'a>;
 }
-#[doc(hidden)]
-pub unsafe trait Proxy: Copy + Debug {
-    fn new(object: Object) -> Self;
-    fn id(self) -> Object;
 
+/// Interface of a proxy
+pub unsafe trait Proxy: Copy + Debug + From<Object> + Into<Object> {
+    // TODO: use From and Into
+
+    /// Create a proxy from an object
+    fn new(object: Object) -> Self {
+        object.into()
+    }
+    /// Get object id
+    fn id(self) -> Object {
+        self.into()
+    }
+
+    // TODO: remove
+    #[doc(hidden)]
     const REQUEST_IS_DESTRUCTOR: &'static [bool];
+    #[doc(hidden)]
     const EVENT_IS_DESTRUCTOR: &'static [bool];
 
+    /// Interface information of proxy
     const INTERFACE: Interface;
 }
 unsafe impl<P: Proxy> Trivial for Option<P> {}
@@ -382,42 +434,8 @@ pub fn socket_path_from_env() -> PathBuf {
     }
 }
 
-const ID_SPACE_MASK: u32 = 0xff00_0000;
-
-#[derive(Error, Debug)]
-/// Errors of protocol violation by the peer
-pub enum ProtocolError {
-    /// Id is not desely allocated
-    #[error("IDs not densely packed: {0:?}")]
-    IdNotDense(Object),
-    /// Id exceeds the limitation of id space. Either overflow or underflow
-    #[error("ID overflow: {0:?}")]
-    IdOverflow(Object),
-    /// Allocate an id twice
-    #[error("ID duplicated: {0:?}")]
-    DuplicateId(Object),
-    /// Error occurs when unmarshal
-    #[error(transparent)]
-    Unmarshal(#[from] unmarshal::Error),
-    ///
-    #[error("unknown object: {0:?}")]
-    UnknownObject(Object),
-    ///
-    #[error("unknown opcode {opcode} for {interface}({object:?})")]
-    UnknownOpcode {
-        /// object id
-        object: Object,
-        ///
-        interface: Interface,
-        ///
-        opcode: u16,
-    },
-}
-
-pub mod client;
-pub mod server;
-mod slab;
-
 pub mod buffer;
+pub mod slab;
+
 pub mod marshal;
 pub mod unmarshal;

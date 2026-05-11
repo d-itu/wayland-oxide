@@ -176,7 +176,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "wayland-oxide"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitflags",
  "thiserror",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-oxide-examples"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rustix",
  "tuplez",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-oxide-scanner"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "prettyplease",
  "proc-macro2",

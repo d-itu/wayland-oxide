@@ -56,31 +56,30 @@ impl<'a> Reader<'a> {
     pub const fn into_inner(self) -> &'a [u8] {
         self.buf
     }
-    pub(crate) const fn read_bytes(&mut self, n: usize) -> Result<&'a [u8]> {
+    pub(crate) const fn read_bytes(&mut self, n: usize) -> Option<&'a [u8]> {
         if let Some((read, remaining)) = self.buf.split_at_checked(n) {
             self.buf = remaining;
-            Ok(read)
-        } else {
-            Err(Error::NotEnoughData)
+            return Some(read);
         }
+        None
     }
-    pub(crate) const fn skip(&mut self, n: usize) -> Result<()> {
+    pub(crate) const fn skip(&mut self, n: usize) -> Option<()> {
         match self.read_bytes(n) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e),
+            Some(_) => Some(()),
+            None => None,
         }
     }
-    pub(crate) const fn read_trivial<T>(&mut self) -> Result<T> {
+    pub(crate) const fn read_trivial<T>(&mut self) -> Option<T> {
         let bytes = match self.read_bytes(mem::size_of::<T>()) {
-            Ok(x) => x,
-            Err(e) => return Err(e),
+            Some(x) => x,
+            None => return None,
         };
         let mut value = MaybeUninit::uninit();
         unsafe {
             bytes
                 .as_ptr()
                 .copy_to_nonoverlapping(value.as_mut_ptr() as _, mem::size_of::<T>());
-            Ok(value.assume_init())
+            Some(value.assume_init())
         }
     }
     /// Decode a type implementing [`Unmarshal`] and move the begining pointer of the internal buffer.
@@ -97,7 +96,7 @@ pub struct Lazy<'a, T> {
 }
 
 impl<'a, T> Lazy<'a, T> {
-    #[doc(hidden)]
+    /// Create a [`Lazy`] from `reader`
     pub const fn new(reader: Reader<'a>) -> Self {
         Self {
             reader,

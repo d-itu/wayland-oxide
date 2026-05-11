@@ -1,6 +1,12 @@
 //!
 
-use core::{mem::MaybeUninit, ptr};
+use core::{
+    marker::PhantomData,
+    mem::MaybeUninit,
+    ptr::{self, NonNull},
+};
+
+use crate::{Header, Reader};
 
 /// Stack-allocated message buffer, with a capaciy of 64KB, which is the maximum possible size of a message.
 /// Works like [`core::io::BorrowedBuf::filled`]
@@ -47,17 +53,18 @@ impl Buffer {
                 .assume_init_ref()
         }
     }
-    /// Copy data from `self.filled - n` to the begining.
-    /// Call after dispatching messages since buffer may contain truncated message.
-    pub(crate) const fn end(&mut self, n: usize) {
+    /// Copy data from `offset` to the begining.
+    /// Call after consuming all the data since buffer may contain truncated message.
+    pub(crate) const fn end(&mut self, offset: usize) {
+        let count = self.filled - offset;
         unsafe {
             ptr::copy(
-                self.data.as_ptr().add(self.filled - n),
+                self.data.as_ptr().add(offset),
                 self.data.as_mut_ptr(),
-                n,
+                count,
             )
         };
-        self.filled = n;
+        self.filled = count;
     }
     /// Fill the buffer with a reader implementing [`std::io::Read`]
     #[cfg(feature = "std")]
@@ -67,5 +74,62 @@ impl Buffer {
             self.advance(n);
         }
         Ok(())
+    }
+
+    ///
+    pub fn drain<'b>(&'b mut self) -> Iter<'b> {
+        Iter {
+            buffer: NonNull::from_ref(self),
+            offset: 0,
+            marker: PhantomData,
+        }
+    }
+}
+
+///
+pub struct Message<'b> {
+    ///
+    pub object: u32,
+    ///
+    pub opcode: u16,
+    ///
+    pub reader: Reader<'b>,
+}
+
+///
+pub struct Iter<'b> {
+    buffer: NonNull<Buffer>,
+    offset: usize,
+    marker: PhantomData<&'b Buffer>,
+}
+
+impl Drop for Iter<'_> {
+    fn drop(&mut self) {
+        unsafe { self.buffer.as_mut() }.end(self.offset)
+    }
+}
+
+impl<'b> Iterator for Iter<'b> {
+    type Item = Message<'b>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let buffer = unsafe { self.buffer.as_ref() };
+        let data = unsafe { buffer.filled().get_unchecked(self.offset..) };
+        let mut reader = Reader::new(data);
+        let Header {
+            object,
+            opcode,
+            size,
+        }: Header<u32> = reader.read_trivial()?;
+
+        let body_size = size - 8;
+        let (body, _) = reader.into_inner().split_at_checked(body_size as _)?;
+        self.offset += size as usize;
+
+        return Some(Message {
+            object,
+            opcode,
+            reader: Reader::new(body),
+        });
     }
 }

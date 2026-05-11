@@ -162,6 +162,10 @@ impl ToTokens for WithSide<&Interface> {
                 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
                 pub struct Proxy(::wayland_oxide::Object);
                 impl Proxy {
+                    pub const fn new(object: ::wayland_oxide::Object) -> Self {
+                        Self(object)
+                    }
+                    
                     #marshal_methods
                 }
                 unsafe impl<'a> ::wayland_oxide::HasRequests<'a> for Proxy {
@@ -170,14 +174,17 @@ impl ToTokens for WithSide<&Interface> {
                 unsafe impl<'a> ::wayland_oxide::HasEvents<'a> for Proxy {
                     type Event = Event<'a>;
                 }
-                unsafe impl ::wayland_oxide::Proxy for Proxy {
-                    fn new(id: ::wayland_oxide::Object) -> Self {
-                        Self(id)
-                    }
-                    fn id(self) -> ::wayland_oxide::Object {
+                impl Into<::wayland_oxide::Object> for Proxy {
+                    fn into(self) -> ::wayland_oxide::Object {
                         self.0
                     }
-
+                }
+                impl From<::wayland_oxide::Object> for Proxy {
+                    fn from(value: ::wayland_oxide::Object) -> Self {
+                        Self(value)
+                    }
+                }
+                unsafe impl ::wayland_oxide::Proxy for Proxy {
                     const REQUEST_IS_DESTRUCTOR: &'static [bool] = &[#(#request_is_destructor),*];
                     const EVENT_IS_DESTRUCTOR: &'static [bool] = &[#(#event_is_destructor),*];
 

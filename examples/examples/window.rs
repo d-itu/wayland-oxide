@@ -10,8 +10,9 @@ use rustix::{
 };
 use tuplez::tuple;
 use wayland_oxide::{
-    Buffer, Complete as _, Fd, GenericNewId, HasEvents, ProtocolError, Proxy as _,
-    client::{Dispatch, Slab},
+    Buffer, Complete as _, Fd, GenericNewId, HasEvents, MessageEnum, Object, Proxy as _, Reader,
+    buffer::Message,
+    slab::{Client, Slab, TaggedUnion},
 };
 
 include!(concat!(env!("OUT_DIR"), "/wayland.rs"));
@@ -37,15 +38,12 @@ struct Dispatcher {
 }
 
 impl Dispatch<WlDisplay> for Dispatcher {
-    fn dispatch(
-        &mut self,
-        slab: &mut Slab<Self>,
-        _: WlDisplay,
-        event: <WlDisplay as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
+    fn dispatch(&mut self, slab: &mut Arena, _: WlDisplay, event: <WlDisplay as HasEvents>::Event) {
         match event {
-            wl_display::Event::Error(lazy) => panic!("{}", lazy.parse()?.message),
-            wl_display::Event::DeleteId(lazy) => slab.drop(lazy.parse()?.id),
+            wl_display::Event::Error(lazy) => panic!("{}", lazy.parse().unwrap().message),
+            wl_display::Event::DeleteId(lazy) => {
+                slab.0.remove(lazy.parse().unwrap().id.try_into().unwrap());
+            }
             wl_display::Event::_Unknown(_) => unreachable!(),
         }
     }
@@ -53,20 +51,20 @@ impl Dispatch<WlDisplay> for Dispatcher {
 impl Dispatch<WlRegistry> for Dispatcher {
     fn dispatch(
         &mut self,
-        slab: &mut Slab<Self>,
+        arena: &mut Arena,
         registry: WlRegistry,
         event: <WlRegistry as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
+    ) {
         match event {
             wl_registry::Event::Global(lazy) => {
                 let wl_registry::Global {
                     name,
                     interface,
                     version,
-                } = lazy.parse()?;
+                } = lazy.parse().unwrap();
                 match interface {
                     "xdg_wm_base" => {
-                        let object = slab.new_id();
+                        let object = arena.new_id();
                         self.globals.xdg_wm_base = Some(object);
                         registry
                             .bind(
@@ -80,7 +78,7 @@ impl Dispatch<WlRegistry> for Dispatcher {
                             .marshal_to(&mut self.buffer);
                     }
                     "wl_compositor" => {
-                        let object = slab.new_id();
+                        let object = arena.new_id();
                         self.globals.wl_compositor = Some(object);
                         registry
                             .bind(
@@ -94,7 +92,7 @@ impl Dispatch<WlRegistry> for Dispatcher {
                             .marshal_to(&mut self.buffer);
                     }
                     "wl_shm" => {
-                        let object = slab.new_id();
+                        let object = arena.new_id();
                         self.globals.wl_shm = Some(object);
                         registry
                             .bind(
@@ -113,49 +111,36 @@ impl Dispatch<WlRegistry> for Dispatcher {
             wl_registry::Event::GlobalRemove(_) => {}
             wl_registry::Event::_Unknown(_) => unreachable!(),
         }
-        Ok(())
     }
 }
 impl Dispatch<XdgWmBase> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Slab<Self>,
+        _: &mut Arena,
         wm_base: XdgWmBase,
         event: <XdgWmBase as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
+    ) {
         match event {
             xdg_wm_base::Event::Ping(lazy) => {
-                let serial = lazy.parse()?.serial;
-                wm_base.pong(serial).marshal_to(&mut self.buffer)
+                let serial = lazy.parse().unwrap().serial;
+                wm_base.pong(serial).marshal_to(&mut self.buffer);
             }
             xdg_wm_base::Event::_Unknown(_) => unreachable!(),
         }
-        Ok(())
     }
 }
 impl Dispatch<WlCallback> for Dispatcher {
-    fn dispatch(
-        &mut self,
-        _: &mut Slab<Self>,
-        _: WlCallback,
-        event: <WlCallback as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
+    fn dispatch(&mut self, _: &mut Arena, _: WlCallback, event: <WlCallback as HasEvents>::Event) {
         match event {
             wl_callback::Event::Done(_) => {
                 self.done = true;
             }
             wl_callback::Event::_Unknown(_) => unreachable!(),
         }
-        Ok(())
     }
 }
 impl Dispatch<WlSurface> for Dispatcher {
-    fn dispatch(
-        &mut self,
-        _: &mut Slab<Self>,
-        _: WlSurface,
-        event: <WlSurface as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
+    fn dispatch(&mut self, _: &mut Arena, _: WlSurface, event: <WlSurface as HasEvents>::Event) {
         match event {
             wl_surface::Event::Enter(_) => {}
             wl_surface::Event::Leave(_) => {}
@@ -163,38 +148,36 @@ impl Dispatch<WlSurface> for Dispatcher {
             wl_surface::Event::PreferredBufferTransform(_) => {}
             wl_surface::Event::_Unknown(_) => unreachable!(),
         }
-        Ok(())
     }
 }
 impl Dispatch<XdgSurface> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Slab<Self>,
+        _: &mut Arena,
         xdg_surface: XdgSurface,
         event: <XdgSurface as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
+    ) {
         match event {
             xdg_surface::Event::Configure(lazy) => {
-                let serial = lazy.parse()?.serial;
+                let serial = lazy.parse().unwrap().serial;
                 xdg_surface
                     .ack_configure(serial)
                     .marshal_to(&mut self.buffer);
             }
             xdg_surface::Event::_Unknown(_) => unreachable!(),
         }
-        Ok(())
     }
 }
 impl Dispatch<XdgToplevel> for Dispatcher {
     fn dispatch(
         &mut self,
-        _: &mut Slab<Self>,
+        _: &mut Arena,
         _: XdgToplevel,
         event: <XdgToplevel as HasEvents>::Event,
-    ) -> Result<(), ProtocolError> {
+    ) {
         match event {
             xdg_toplevel::Event::Configure(lazy) => {
-                let e = lazy.parse()?;
+                let e = lazy.parse().unwrap();
                 self.events
                     .push(Event::Resize([e.width, e.height].map(|x| x as _)));
             }
@@ -205,22 +188,12 @@ impl Dispatch<XdgToplevel> for Dispatcher {
             xdg_toplevel::Event::WmCapabilities(_) => {}
             xdg_toplevel::Event::_Unknown(_) => unreachable!(),
         }
-        Ok(())
     }
 }
 
 macro_rules! delegate_noop {
     ($($proxy:ident),* $(,)?) => {
-        $(impl Dispatch<$proxy> for Dispatcher {
-            fn dispatch(
-                &mut self,
-                _: &mut Slab<Self>,
-                _: $proxy,
-                _: <$proxy as HasEvents>::Event,
-            ) -> Result<(), ProtocolError> {
-                Ok(())
-            }
-        })*
+        $(impl Dispatch<$proxy> for Dispatcher {})*
     };
 }
 
@@ -236,10 +209,10 @@ fn main() {
     let mut buffer = Buffer::new();
     let mut dispatcher = Dispatcher::default();
 
-    let mut slab = Slab::<Dispatcher>::new();
-    let display: wl_display::Proxy = slab.new_id();
-    let registry = slab.new_id();
-    let callback = slab.new_id();
+    let mut arena = Arena(Slab::new());
+    let display: wl_display::Proxy = arena.new_id();
+    let registry = arena.new_id();
+    let callback = arena.new_id();
 
     socket
         .write_all(
@@ -250,11 +223,12 @@ fn main() {
 
     loop {
         buffer.fill(&mut socket).unwrap();
-        slab.dispatch(&mut dispatcher, &mut buffer).unwrap();
+        dispatcher.dispatch_all(&mut buffer, &mut arena);
         if dispatcher.done {
             break;
         }
     }
+
     dispatcher.done = false;
     socket
         .write_all(dispatcher.buffer.drain(..).as_slice())
@@ -263,9 +237,9 @@ fn main() {
     let xdg_wm_base = dispatcher.globals.xdg_wm_base.unwrap();
     let wl_compositor = dispatcher.globals.wl_compositor.unwrap();
 
-    let wl_surface = slab.new_id();
-    let xdg_surface = slab.new_id();
-    let toplevel = slab.new_id();
+    let wl_surface = arena.new_id();
+    let xdg_surface = arena.new_id();
+    let toplevel = arena.new_id();
 
     socket
         .write_all(
@@ -288,10 +262,8 @@ fn main() {
     };
     'outer: loop {
         buffer.fill(&mut socket).unwrap();
-        slab.dispatch(&mut dispatcher, &mut buffer).unwrap();
-        socket
-            .write_all(dispatcher.buffer.drain(..).as_slice())
-            .unwrap();
+        dispatcher.dispatch_all(&mut buffer, &mut arena);
+        dispatcher.flush(&mut socket);
 
         for event in dispatcher.events.drain(..) {
             match event {
@@ -303,8 +275,8 @@ fn main() {
                     let [width, height] = size;
                     let len = width * height * 4;
                     let shm = dispatcher.globals.wl_shm.unwrap();
-                    let pool = slab.new_id();
-                    let buffer = slab.new_id();
+                    let pool = arena.new_id();
+                    let buffer = arena.new_id();
                     let fd = rustix::fs::memfd_create(c"", MemfdFlags::empty()).unwrap();
                     rustix::fs::ftruncate(&fd, len as _).unwrap();
 
@@ -412,5 +384,49 @@ fn render(ptr: *mut u8, width: u32, height: u32, _: usize) {
             *pixel = sample([x as f32 / width as f32, y as f32 / height as f32]);
             offset += 4;
         }
+    }
+}
+
+impl Dispatcher {
+    fn dispatch_raw<P>(&mut self, arena: &mut Arena, object: Object, opcode: u16, reader: Reader)
+    where
+        Self: Dispatch<P>,
+        for<'a> P: HasEvents<'a> + From<Object>,
+    {
+        Dispatch::<P>::dispatch(self, arena, object.into(), P::Event::new(opcode, reader));
+    }
+
+    fn flush(&mut self, socket: &mut UnixStream) {
+        socket.write_all(self.buffer.drain(..).as_slice()).unwrap();
+    }
+    fn dispatch_all(&mut self, buffer: &mut Buffer, arena: &mut Arena) {
+        for Message {
+            object,
+            opcode,
+            reader,
+        } in buffer.drain()
+        {
+            let object: Object = object.try_into().unwrap();
+            arena.0.get(object).unwrap()(self, arena, object, opcode, reader);
+        }
+    }
+}
+
+type DispatchFn = fn(&mut Dispatcher, &mut Arena, Object, u16, Reader);
+
+trait Dispatch<P: for<'a> HasEvents<'a>> {
+    fn dispatch<'a>(&mut self, arena: &mut Arena, object: P, event: <P as HasEvents<'a>>::Event) {
+        _ = (arena, object, event);
+    }
+}
+
+struct Arena(Slab<TaggedUnion<DispatchFn>, Client>);
+impl Arena {
+    fn new_id<P>(&mut self) -> P
+    where
+        Dispatcher: Dispatch<P>,
+        P: for<'a> HasEvents<'a> + From<Object>,
+    {
+        self.0.insert(Dispatcher::dispatch_raw::<P>).into()
     }
 }
