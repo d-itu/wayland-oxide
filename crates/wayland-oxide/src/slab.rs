@@ -5,7 +5,7 @@ use core::{cmp::Ordering, hint, marker::PhantomData, mem};
 use alloc::{vec, vec::Vec};
 use thiserror::Error;
 
-use crate::Object;
+use crate::{ID_SPACE_MASK, Object};
 
 ///
 #[derive(Clone, Copy)]
@@ -93,8 +93,6 @@ impl<V> Entry for TaggedUnion<V> {
         }
     }
 }
-
-const ID_SPACE_MASK: u32 = 0xff00_0000;
 
 ///
 pub trait Side {
@@ -185,82 +183,118 @@ impl<E: Entry, S: Side> Slab<E, S> {
         let index = id as usize - S::Peer::SLOT_OFFSET;
         let vec = unsafe { self.storage.get_unchecked_mut(S::Peer::VEC_OFFSET) };
         match index.cmp(&vec.len()) {
-            Ordering::Less => {
-                let entry = unsafe { vec.get_unchecked_mut(index) };
-                if entry.is_value() {
-                    Err(Error::DuplicateId(object))?
-                }
-                *entry = data.into()
-            }
+            Ordering::Less => *unsafe { vec.get_unchecked_mut(index) } = data.into(),
             Ordering::Equal => vec.push(data.into()),
-            Ordering::Greater => Err(Error::IdNotDense(object))?,
+            Ordering::Greater => Err(Error::InvalidId(object))?,
         }
         Ok(())
     }
     ///
-    pub fn get(&mut self, object: Object) -> Option<&E::Value> {
+    pub unsafe fn client_get_unchecked(&self, object: Object) -> Option<&E::Value> {
         let id = object.as_u32();
-        if id < ID_SPACE_MASK {
-            let index = id as usize - 1;
-            unsafe { self.storage.get_unchecked(Client::VEC_OFFSET) }.get(index)
-        } else {
-            let index = (id - ID_SPACE_MASK) as usize;
-            unsafe { self.storage.get_unchecked(Server::VEC_OFFSET) }.get(index)
+        debug_assert!(id < ID_SPACE_MASK);
+        let index = id as usize - 1;
+        unsafe { self.storage.get_unchecked(Client::VEC_OFFSET) }
+            .get(index)
+            .and_then(E::get)
+    }
+    ///
+    pub unsafe fn server_get_unchecked(&self, object: Object) -> Option<&E::Value> {
+        let id = object.as_u32();
+        debug_assert!(id >= ID_SPACE_MASK);
+        let index = (id - ID_SPACE_MASK) as usize;
+        unsafe { self.storage.get_unchecked(Server::VEC_OFFSET) }
+            .get(index)
+            .and_then(E::get)
+    }
+    ///
+    pub fn get(&self, object: Object) -> Option<&E::Value> {
+        match object.side() {
+            crate::Side::Client => unsafe { self.client_get_unchecked(object) },
+            crate::Side::Server => unsafe { self.server_get_unchecked(object) },
         }
-        .and_then(E::get)
+    }
+    ///
+    pub unsafe fn client_get_unchecked_mut(&mut self, object: Object) -> Option<&mut E::Value> {
+        let id = object.as_u32();
+        debug_assert!(id < ID_SPACE_MASK);
+        let index = id as usize - 1;
+        unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) }
+            .get_mut(index)
+            .and_then(E::get_mut)
+    }
+    ///
+    pub unsafe fn server_get_unchecked_mut(&mut self, object: Object) -> Option<&mut E::Value> {
+        let id = object.as_u32();
+        debug_assert!(id >= ID_SPACE_MASK);
+        let index = (id - ID_SPACE_MASK) as usize;
+        unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) }
+            .get_mut(index)
+            .and_then(E::get_mut)
     }
     ///
     pub fn get_mut(&mut self, object: Object) -> Option<&mut E::Value> {
-        let id = object.as_u32();
-        if id < ID_SPACE_MASK {
-            let index = id as usize - 1;
-            unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) }.get_mut(index)
-        } else {
-            let index = (id - ID_SPACE_MASK) as usize;
-            unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) }.get_mut(index)
+        match object.side() {
+            crate::Side::Client => unsafe { self.client_get_unchecked_mut(object) },
+            crate::Side::Server => unsafe { self.server_get_unchecked_mut(object) },
         }
-        .and_then(E::get_mut)
     }
 }
 impl<E: Entry> Slab<E, Client> {
     ///
-    pub fn remove(&mut self, object: Object) -> Option<E::Value> {
+    pub unsafe fn client_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
         let id = object.as_u32();
-        if id < ID_SPACE_MASK {
-            let index = id as usize - 1;
-            slab_try_remove(
-                unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) },
-                &mut self.next_free,
-                index,
-            )
-        } else {
-            let index = (id - ID_SPACE_MASK) as usize;
-            slab_try_remove(
-                unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) },
-                &mut 0,
-                index,
-            )
+        let index = id as usize - 1;
+        slab_try_remove(
+            unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) },
+            &mut self.next_free,
+            index,
+        )
+    }
+    ///
+    pub unsafe fn server_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
+        let id = object.as_u32();
+        let index = (id - ID_SPACE_MASK) as usize;
+        slab_try_remove(
+            unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) },
+            &mut 0,
+            index,
+        )
+    }
+    ///
+    pub fn remove(&mut self, object: Object) -> Option<E::Value> {
+        match object.side() {
+            crate::Side::Client => unsafe { self.client_remove_unchecked(object) },
+            crate::Side::Server => unsafe { self.server_remove_unchecked(object) },
         }
     }
 }
 impl<E: Entry> Slab<E, Server> {
     ///
-    pub fn remove(&mut self, object: Object) -> Option<E::Value> {
+    pub unsafe fn client_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
         let id = object.as_u32();
-        if id < ID_SPACE_MASK {
-            let index = id as usize - 1;
-            slab_try_remove(
-                unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) },
-                &mut 0,
-                index,
-            )
-        } else {
-            let index = (id - ID_SPACE_MASK) as usize;
-            slab_try_remove(
-                unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) },
-                &mut self.next_free,
-                index,
-            )
+        let index = id as usize - 1;
+        slab_try_remove(
+            unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) },
+            &mut 0,
+            index,
+        )
+    }
+    ///
+    pub unsafe fn server_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
+        let id = object.as_u32();
+        let index = (id - ID_SPACE_MASK) as usize;
+        slab_try_remove(
+            unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) },
+            &mut self.next_free,
+            index,
+        )
+    }
+    ///
+    pub fn remove(&mut self, object: Object) -> Option<E::Value> {
+        match object.side() {
+            crate::Side::Client => unsafe { self.client_remove_unchecked(object) },
+            crate::Side::Server => unsafe { self.server_remove_unchecked(object) },
         }
     }
 }
@@ -269,9 +303,6 @@ impl<E: Entry> Slab<E, Server> {
 /// Errors of protocol violation by the peer
 pub enum Error {
     /// Id is not desely allocated
-    #[error("IDs not densely packed: {0:?}")]
-    IdNotDense(Object),
-    /// Allocate an id twice
-    #[error("ID duplicated: {0:?}")]
-    DuplicateId(Object),
+    #[error("Invalid Id: {0:?}")]
+    InvalidId(Object),
 }

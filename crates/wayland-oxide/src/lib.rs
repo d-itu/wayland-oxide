@@ -27,7 +27,7 @@ pub struct Fixed(i32);
 
 #[repr(transparent)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-/// Unix fd. This type does not encode into message buffer. It hints you to where an fd is needed.
+/// Unix fd. This type does not encode into message buffer. It hints you where an fd is needed.
 pub struct Fd;
 
 impl Debug for Fixed {
@@ -78,6 +78,18 @@ impl Debug for Object {
     }
 }
 
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Side {
+    #[allow(missing_docs)]
+    Client,
+    #[allow(missing_docs)]
+    Server,
+}
+
+///
+pub const ID_SPACE_MASK: u32 = 0xff00_0000;
+
 impl Object {
     /// Get underlying u32 data.
     pub const fn as_u32(self) -> u32 {
@@ -92,6 +104,14 @@ impl Object {
         match NonZeroU32::new(x) {
             Some(x) => Some(Self(x)),
             None => None,
+        }
+    }
+    ///
+    pub const fn side(self) -> Side {
+        if self.as_u32() >= ID_SPACE_MASK {
+            Side::Server
+        } else {
+            Side::Client
         }
     }
 }

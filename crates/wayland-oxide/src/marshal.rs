@@ -11,6 +11,8 @@ use tuplez::{Tuple, Unit};
 
 use crate::{Message, MessageBody};
 
+// TODO: add a trait for messages with fixed size
+
 /// Types can be encoded to a message buffer.
 pub unsafe trait Marshal {
     /// Calculate byte size of a message. Size is used for allocating message buffer.
@@ -97,7 +99,8 @@ unsafe impl<X: Marshal, Xs: Marshal> Marshal for Tuple<X, Xs> {
 }
 
 /// A type contains zero or more complete messages.
-pub trait Complete: Marshal {
+pub unsafe trait Complete: Marshal {
+    #[must_use]
     /// Returns a `Box<[u8]>` of encoded data
     fn marshal_to_boxed_slice(&self) -> Box<[u8]> {
         let size = self.calc_size();
@@ -118,6 +121,6 @@ pub trait Complete: Marshal {
     }
 }
 
-impl<P: Marshal, T: Marshal + MessageBody> Complete for Message<P, T> {}
-impl Complete for Unit {}
-impl<X: Complete, Xs: Complete> Complete for Tuple<X, Xs> {}
+unsafe impl<P: Marshal, T: Marshal + MessageBody> Complete for Message<P, T> {}
+unsafe impl Complete for Unit {}
+unsafe impl<X: Complete, Xs: Complete> Complete for Tuple<X, Xs> {}

@@ -111,7 +111,10 @@ impl ToTokens for WithSide<&Interface> {
         };
         let proxy = Ident(snake_to_pascal(interface));
         tokens.extend(quote! {
-            pub type #proxy = #name::Proxy;
+            #[repr(transparent)]
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+            pub struct #proxy(::wayland_oxide::Object);
+
             #description
             pub mod #name {
                 #requests
@@ -121,6 +124,7 @@ impl ToTokens for WithSide<&Interface> {
                 }
 
                 #[repr(u16)]
+                #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
                 pub enum RequestOpcode {
                     #(#requests_opcode,)*
                     SIZE,
@@ -140,6 +144,7 @@ impl ToTokens for WithSide<&Interface> {
                 unsafe impl ::wayland_oxide::Opcode for RequestOpcode {}
 
                 #[repr(u16)]
+                #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
                 pub enum EventOpcode {
                     #(#events_opcode,)*
                     SIZE,
@@ -158,9 +163,7 @@ impl ToTokens for WithSide<&Interface> {
                 }
                 unsafe impl ::wayland_oxide::Opcode for EventOpcode {}
 
-                #[repr(transparent)]
-                #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-                pub struct Proxy(::wayland_oxide::Object);
+                pub type Proxy = super::#proxy;
                 impl Proxy {
                     pub const fn new(object: ::wayland_oxide::Object) -> Self {
                         Self(object)

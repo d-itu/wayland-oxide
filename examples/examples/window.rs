@@ -1,5 +1,5 @@
 use core::{array, f32::consts::SQRT_2, mem::MaybeUninit, ptr};
-use std::{io::Write as _, os::unix::net::UnixStream, thread};
+use std::{ffi::c_void, io::Write as _, os::unix::net::UnixStream, thread};
 
 use rustix::{
     fd::AsFd,
@@ -260,6 +260,8 @@ fn main() {
     } else {
         (0, &(render as Render))
     };
+    let mut ptr: *mut c_void = ptr::null_mut();
+    let mut len = 0;
     'outer: loop {
         buffer.fill(&mut socket).unwrap();
         dispatcher.dispatch_all(&mut buffer, &mut arena);
@@ -271,16 +273,26 @@ fn main() {
                     if new_size == size {
                         continue;
                     }
+
+                    if !ptr.is_null() {
+                        unsafe { rustix::mm::munmap(ptr, len as _).unwrap() }
+                    }
                     size = new_size;
-                    let [width, height] = size;
-                    let len = width * height * 4;
+                    let [mut width, mut height] = size;
+                    if width == 0 {
+                        width = 800
+                    }
+                    if height == 0 {
+                        height = 600
+                    }
+                    len = width * height * 4;
                     let shm = dispatcher.globals.wl_shm.unwrap();
                     let pool = arena.new_id();
                     let buffer = arena.new_id();
                     let fd = rustix::fs::memfd_create(c"", MemfdFlags::empty()).unwrap();
                     rustix::fs::ftruncate(&fd, len as _).unwrap();
 
-                    let ptr = unsafe {
+                    ptr = unsafe {
                         rustix::mm::mmap(
                             ptr::null_mut(),
                             len as _,
