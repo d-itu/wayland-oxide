@@ -1,4 +1,4 @@
-//!
+//! Slab allocator for objects
 
 use core::{cmp::Ordering, hint, marker::PhantomData, mem};
 
@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::{ID_SPACE_MASK, Object};
 
-///
+/// Handle to a vacant slot
 #[derive(Clone, Copy)]
 pub struct Handle(u32);
 impl From<()> for Handle {
@@ -16,35 +16,39 @@ impl From<()> for Handle {
     }
 }
 
-///
+/// Entry of slab
 pub trait Entry: Sized {
-    ///
+    /// Value of entry
     type Value: Into<Self>;
 
-    ///
+    /// Create a vacant entry
     fn vacant(handle: Handle) -> Self;
 
-    ///
+    /// Get vacant handle
+    /// # Safety
+    /// `self` must be vacant
     unsafe fn vacant_unchecked(&self) -> Handle;
 
-    ///
+    /// Check if the entry is occupied
     fn is_value(&self) -> bool;
 
-    ///
+    /// Take the value
+    /// # Safety
+    /// `self` must be occupied
     unsafe fn take_unchecked(self) -> Self::Value;
 
-    ///
+    /// Get mutable reference to the value
     fn get_mut(&mut self) -> Option<&mut Self::Value>;
 
-    ///
+    /// Get reference to the value
     fn get(&self) -> Option<&Self::Value>;
 }
 
-///
+/// Tagged union of value and vacant handle
 pub enum TaggedUnion<V> {
-    ///
+    /// Occupied with value
     Occupied(V),
-    ///
+    /// Vacant with handle
     Vacant(Handle),
 }
 impl<V> From<V> for TaggedUnion<V> {
@@ -94,33 +98,33 @@ impl<V> Entry for TaggedUnion<V> {
     }
 }
 
-///
-pub trait Side {
-    #[doc(hidden)]
-    const VEC_OFFSET: usize;
-    #[doc(hidden)]
-    const SLOT_OFFSET: usize;
-    #[doc(hidden)]
-    type Peer: Side;
-}
-
-///
+/// Client side
 pub struct Client;
-///
+/// Server side
 pub struct Server;
 
-impl Side for Client {
+mod private {
+    pub trait Side {
+        const VEC_OFFSET: usize;
+        const SLOT_OFFSET: usize;
+        type Peer: Side;
+    }
+}
+use private::Side;
+
+impl private::Side for Client {
     const VEC_OFFSET: usize = 0;
     const SLOT_OFFSET: usize = 1;
     type Peer = Server;
 }
-impl Side for Server {
+impl private::Side for Server {
     const VEC_OFFSET: usize = 1;
     const SLOT_OFFSET: usize = ID_SPACE_MASK as _;
     type Peer = Client;
 }
 
-///
+/// Slab allocator for objects
+#[derive(Default)]
 pub struct Slab<E, S> {
     /// `storage[0]` -> client
     ///
@@ -131,8 +135,8 @@ pub struct Slab<E, S> {
 }
 
 impl<E, S> Slab<E, S> {
-    ///
-    pub fn new() -> Self {
+    /// Create a new empty slab
+    pub const fn new() -> Self {
         Self {
             storage: [const { vec![] }; 2],
             next_free: 0,
@@ -142,7 +146,7 @@ impl<E, S> Slab<E, S> {
 }
 
 fn slab_try_remove<E: Entry>(
-    entries: &mut Vec<E>,
+    entries: &mut [E],
     next_free: &mut usize,
     index: usize,
 ) -> Option<E::Value> {
@@ -157,7 +161,7 @@ fn slab_try_remove<E: Entry>(
     None
 }
 
-impl<E: Entry, S: Side> Slab<E, S> {
+impl<E: Entry, S: private::Side> Slab<E, S> {
     fn push(&mut self, value: E::Value) {
         let index = self.next_free;
         let entries = unsafe { self.storage.get_unchecked_mut(S::VEC_OFFSET) };
@@ -171,13 +175,13 @@ impl<E: Entry, S: Side> Slab<E, S> {
             *entry = value.into();
         }
     }
-    ///
+    /// Insert a new object
     pub fn insert(&mut self, data: E::Value) -> Object {
         let id = self.next_free + S::SLOT_OFFSET;
         self.push(data);
         unsafe { Object::from_u32(id as _) }
     }
-    ///
+    /// Receive object from peer
     pub fn receive(&mut self, object: Object, data: E::Value) -> Result<(), Error> {
         let id = object.as_u32();
         let index = id as usize - S::Peer::SLOT_OFFSET;
@@ -189,7 +193,9 @@ impl<E: Entry, S: Side> Slab<E, S> {
         }
         Ok(())
     }
-    ///
+    /// Get reference to the client-allocated value
+    /// # Safety
+    /// `object` must be client-allocated
     pub unsafe fn client_get_unchecked(&self, object: Object) -> Option<&E::Value> {
         let id = object.as_u32();
         debug_assert!(id < ID_SPACE_MASK);
@@ -198,7 +204,9 @@ impl<E: Entry, S: Side> Slab<E, S> {
             .get(index)
             .and_then(E::get)
     }
-    ///
+    /// Get reference to the server-allocated value
+    /// # Safety
+    /// `object` must be server-allocated
     pub unsafe fn server_get_unchecked(&self, object: Object) -> Option<&E::Value> {
         let id = object.as_u32();
         debug_assert!(id >= ID_SPACE_MASK);
@@ -207,14 +215,16 @@ impl<E: Entry, S: Side> Slab<E, S> {
             .get(index)
             .and_then(E::get)
     }
-    ///
+    /// Get reference to the value
     pub fn get(&self, object: Object) -> Option<&E::Value> {
         match object.side() {
             crate::Side::Client => unsafe { self.client_get_unchecked(object) },
             crate::Side::Server => unsafe { self.server_get_unchecked(object) },
         }
     }
-    ///
+    /// Get mutable reference to the client-allocated value
+    /// # Safety
+    /// `object` must be client-allocated
     pub unsafe fn client_get_unchecked_mut(&mut self, object: Object) -> Option<&mut E::Value> {
         let id = object.as_u32();
         debug_assert!(id < ID_SPACE_MASK);
@@ -223,7 +233,9 @@ impl<E: Entry, S: Side> Slab<E, S> {
             .get_mut(index)
             .and_then(E::get_mut)
     }
-    ///
+    /// Get mutable reference to the server-allocated value
+    /// # Safety
+    /// `object` must be server-allocated
     pub unsafe fn server_get_unchecked_mut(&mut self, object: Object) -> Option<&mut E::Value> {
         let id = object.as_u32();
         debug_assert!(id >= ID_SPACE_MASK);
@@ -232,7 +244,7 @@ impl<E: Entry, S: Side> Slab<E, S> {
             .get_mut(index)
             .and_then(E::get_mut)
     }
-    ///
+    /// Get mutable reference to the value
     pub fn get_mut(&mut self, object: Object) -> Option<&mut E::Value> {
         match object.side() {
             crate::Side::Client => unsafe { self.client_get_unchecked_mut(object) },
@@ -241,7 +253,9 @@ impl<E: Entry, S: Side> Slab<E, S> {
     }
 }
 impl<E: Entry> Slab<E, Client> {
-    ///
+    /// Remove client-allocated value
+    /// # Safety
+    /// `object` must be client-allocated
     pub unsafe fn client_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
         let id = object.as_u32();
         let index = id as usize - 1;
@@ -251,7 +265,9 @@ impl<E: Entry> Slab<E, Client> {
             index,
         )
     }
-    ///
+    /// Remove server-allocated value
+    /// # Safety
+    /// `object` must be server-allocated
     pub unsafe fn server_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
         let id = object.as_u32();
         let index = (id - ID_SPACE_MASK) as usize;
@@ -261,7 +277,7 @@ impl<E: Entry> Slab<E, Client> {
             index,
         )
     }
-    ///
+    /// Remove value
     pub fn remove(&mut self, object: Object) -> Option<E::Value> {
         match object.side() {
             crate::Side::Client => unsafe { self.client_remove_unchecked(object) },
@@ -270,7 +286,9 @@ impl<E: Entry> Slab<E, Client> {
     }
 }
 impl<E: Entry> Slab<E, Server> {
-    ///
+    /// Remove client-allocated value
+    /// # Safety
+    /// `object` must be client-allocated
     pub unsafe fn client_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
         let id = object.as_u32();
         let index = id as usize - 1;
@@ -280,7 +298,9 @@ impl<E: Entry> Slab<E, Server> {
             index,
         )
     }
-    ///
+    /// Remove server-allocated value
+    /// # Safety
+    /// `object` must be server-allocated
     pub unsafe fn server_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
         let id = object.as_u32();
         let index = (id - ID_SPACE_MASK) as usize;
@@ -290,7 +310,7 @@ impl<E: Entry> Slab<E, Server> {
             index,
         )
     }
-    ///
+    /// Remove value
     pub fn remove(&mut self, object: Object) -> Option<E::Value> {
         match object.side() {
             crate::Side::Client => unsafe { self.client_remove_unchecked(object) },

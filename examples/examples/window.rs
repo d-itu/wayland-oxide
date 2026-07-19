@@ -205,7 +205,7 @@ delegate_noop! {
 }
 
 fn main() {
-    let mut socket = UnixStream::connect(&wayland_oxide::socket_path_from_env()).unwrap();
+    let mut socket = UnixStream::connect(wayland_oxide::socket_path_from_env()).unwrap();
     let mut buffer = Buffer::new();
     let mut dispatcher = Dispatcher::default();
 

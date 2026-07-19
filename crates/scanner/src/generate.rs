@@ -168,13 +168,13 @@ impl ToTokens for WithSide<&Interface> {
                     pub const fn new(object: ::wayland_oxide::Object) -> Self {
                         Self(object)
                     }
-                    
+
                     #marshal_methods
                 }
-                unsafe impl<'a> ::wayland_oxide::HasRequests<'a> for Proxy {
+                impl<'a> ::wayland_oxide::HasRequests<'a> for Proxy {
                     type Request = Request<'a>;
                 }
-                unsafe impl<'a> ::wayland_oxide::HasEvents<'a> for Proxy {
+                impl<'a> ::wayland_oxide::HasEvents<'a> for Proxy {
                     type Event = Event<'a>;
                 }
                 impl Into<::wayland_oxide::Object> for Proxy {
@@ -187,14 +187,14 @@ impl ToTokens for WithSide<&Interface> {
                         Self(value)
                     }
                 }
-                unsafe impl ::wayland_oxide::Proxy for Proxy {
+                impl ::wayland_oxide::Proxy for Proxy {
                     const REQUEST_IS_DESTRUCTOR: &'static [bool] = &[#(#request_is_destructor),*];
                     const EVENT_IS_DESTRUCTOR: &'static [bool] = &[#(#event_is_destructor),*];
 
                     const INTERFACE: ::wayland_oxide::Interface = INTERFACE;
                 }
                 unsafe impl ::wayland_oxide::TrivialMarshal for Proxy {}
-                unsafe impl ::wayland_oxide::Unmarshal<'_> for Proxy {
+                impl ::wayland_oxide::Unmarshal<'_> for Proxy {
                     fn unmarshal(reader: &mut ::wayland_oxide::unmarshal::Reader) -> ::wayland_oxide::unmarshal::Result<Self> {
                         Ok(Self(reader.read()?))
                     }
@@ -260,7 +260,7 @@ impl ToTokens for Entry {
             ..
         } = self;
         let name = snake_to_pascal(name);
-        let name = match name.as_bytes().get(0) {
+        let name = match name.as_bytes().first() {
             Some(b'0'..=b'9') => format!("_{name}"),
             _ => name,
         };
@@ -418,10 +418,10 @@ struct StructDef<'a> {
 
 impl Message {
     fn struct_def(&self, kind: MessageKind) -> StructDef<'_> {
-        let &Self {
-            ref name,
-            ref description,
-            ref args,
+        let Self {
+            name,
+            description,
+            args,
             ..
         } = self;
         let name = Ident(snake_to_pascal(name));
@@ -496,7 +496,7 @@ impl ToTokens for Marshal<(&Message, MessageKind)> {
         let args = args.iter().map(|arg| Ident(&arg.name));
         let args1 = args.clone();
         tokens.extend(quote! {
-            unsafe impl #lifetime ::wayland_oxide::marshal::Marshal for #name #lifetime {
+            impl #lifetime ::wayland_oxide::marshal::Marshal for #name #lifetime {
                 fn calc_size(&self) -> usize {
                     0 #(+self.#args.calc_size())*
                 }
@@ -567,7 +567,7 @@ impl ToTokens for Unmarshal<(&Message, MessageKind)> {
         struct_def.to_tokens(tokens);
         let args = args.iter().map(|arg| Ident(&arg.name));
         tokens.extend(quote! {
-            unsafe impl<'a> ::wayland_oxide::unmarshal::Unmarshal<'a> for #name #lifetime {
+            impl<'a> ::wayland_oxide::unmarshal::Unmarshal<'a> for #name #lifetime {
                 fn unmarshal(_reader: &mut ::wayland_oxide::unmarshal::Reader<'a>) -> ::wayland_oxide::unmarshal::Result<Self> {
                     Ok(Self {
                         #(#args: _reader.read()?,)*

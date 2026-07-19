@@ -47,6 +47,7 @@ pub enum Side {
 }
 
 /// Code generator configurations.
+#[non_exhaustive]
 pub struct Scanner {
     pretty: bool,
 }

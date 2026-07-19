@@ -10,7 +10,7 @@ const REGISTRY: WlRegistry = WlRegistry::new(Object::try_from_u32(2).unwrap());
 const CALLBACK: WlCallback = WlCallback::new(Object::try_from_u32(3).unwrap());
 
 fn main() {
-    let mut socket = UnixStream::connect(&wayland_oxide::socket_path_from_env()).unwrap();
+    let mut socket = UnixStream::connect(wayland_oxide::socket_path_from_env()).unwrap();
 
     let msg =
         tuple!(DISPLAY.get_registry(REGISTRY), DISPLAY.sync(CALLBACK)).marshal_to_boxed_slice();
@@ -32,13 +32,14 @@ fn main() {
                     wl_display::Event::_Unknown(_) => unreachable!(),
                 },
                 2 => match wl_registry::Event::new(opcode, reader) {
-                    wl_registry::Event::Global(lazy) => match lazy.parse().unwrap() {
-                        wl_registry::Global {
+                    wl_registry::Event::Global(lazy) => {
+                        let wl_registry::Global {
                             name,
                             interface,
                             version,
-                        } => println!("{} {} v{}", name, interface, version),
-                    },
+                        } = lazy.parse().unwrap();
+                        println!("{} {} v{}", name, interface, version)
+                    }
                     wl_registry::Event::GlobalRemove(_) => {}
                     wl_registry::Event::_Unknown(_) => unreachable!(),
                 },

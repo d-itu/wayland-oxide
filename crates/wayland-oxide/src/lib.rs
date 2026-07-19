@@ -61,9 +61,9 @@ impl From<f64> for Fixed {
     }
 }
 
-impl Into<f64> for Fixed {
-    fn into(self) -> f64 {
-        self.as_f64()
+impl From<Fixed> for f64 {
+    fn from(val: Fixed) -> Self {
+        val.as_f64()
     }
 }
 
@@ -78,7 +78,7 @@ impl Debug for Object {
     }
 }
 
-///
+/// Side of an object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Side {
     #[allow(missing_docs)]
@@ -87,8 +87,7 @@ pub enum Side {
     Server,
 }
 
-///
-pub const ID_SPACE_MASK: u32 = 0xff00_0000;
+const ID_SPACE_MASK: u32 = 0xff00_0000;
 
 impl Object {
     /// Get underlying u32 data.
@@ -96,8 +95,11 @@ impl Object {
         self.0.get()
     }
     /// Construct from u32. Input must not be 0
-    pub const unsafe fn from_u32(x: u32) -> Self {
-        Self(unsafe { NonZeroU32::new_unchecked(x) })
+    /// # Safety
+    ///
+    /// The value must not be zero.
+    pub const unsafe fn from_u32(value: u32) -> Self {
+        Self(unsafe { NonZeroU32::new_unchecked(value) })
     }
     /// Try to create an object from u32, return None if input is 0
     pub const fn try_from_u32(x: u32) -> Option<Self> {
@@ -106,7 +108,7 @@ impl Object {
             None => None,
         }
     }
-    ///
+    /// Get side of an object.
     pub const fn side(self) -> Side {
         if self.as_u32() >= ID_SPACE_MASK {
             Side::Server
@@ -124,14 +126,14 @@ impl TryFrom<u32> for Object {
 }
 
 unsafe impl TrivialMarshal for Object {}
-unsafe impl Unmarshal<'_> for Object {
+impl Unmarshal<'_> for Object {
     fn unmarshal(reader: &mut Reader<'_>) -> unmarshal::Result<Self> {
         let id: u32 = reader
             .read_trivial()
             .ok_or(unmarshal::Error::NotEnoughData)?;
         NonZeroU32::new(id)
             .map(Object)
-            .ok_or_else(|| unmarshal::Error::NullObject)
+            .ok_or(unmarshal::Error::NullObject)
     }
 }
 
@@ -161,7 +163,7 @@ pub struct Header<P = Object, O = u16> {
     pub opcode: O,
     pub size: u16,
 }
-unsafe impl<'a, P: Unmarshal<'a>, O: Opcode> Unmarshal<'a> for Header<P, O> {
+impl<'a, P: Unmarshal<'a>, O: Opcode> Unmarshal<'a> for Header<P, O> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         Ok(Self {
             object: reader.read()?,
@@ -181,9 +183,9 @@ pub trait MessageBody {
     const OPCODE: Self::Opcode;
 }
 
-///
+/// Enum of all messages
 pub trait MessageEnum<'a> {
-    ///
+    /// Create a message from opcode and reader
     fn new(opcode: u16, reader: Reader<'a>) -> Self;
 }
 
@@ -229,7 +231,7 @@ unsafe impl Trivial for Fixed {}
 unsafe impl Trivial for Option<Object> {}
 unsafe impl<P, T: Opcode> TrivialMarshal for Header<P, T> {}
 
-unsafe impl<T: TrivialMarshal> Marshal for T {
+impl<T: TrivialMarshal> Marshal for T {
     fn calc_size(&self) -> usize {
         mem::size_of::<Self>()
     }
@@ -237,13 +239,13 @@ unsafe impl<T: TrivialMarshal> Marshal for T {
         unsafe { writer.write_trivial(self) };
     }
 }
-unsafe impl<T: TrivialUnmarshal> Unmarshal<'_> for T {
+impl<T: TrivialUnmarshal> Unmarshal<'_> for T {
     fn unmarshal(reader: &mut Reader) -> unmarshal::Result<Self> {
         reader.read_trivial().ok_or(unmarshal::Error::NotEnoughData)
     }
 }
 
-unsafe impl Marshal for &str {
+impl Marshal for &str {
     fn calc_size(&self) -> usize {
         4 + aligned(4, self.len() + 1)
     }
@@ -257,7 +259,7 @@ unsafe impl Marshal for &str {
         }
     }
 }
-unsafe impl<'a> Unmarshal<'a> for &'a str {
+impl<'a> Unmarshal<'a> for &'a str {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         let size = reader.read::<u32>()? as usize;
         let res = unsafe {
@@ -274,7 +276,7 @@ unsafe impl<'a> Unmarshal<'a> for &'a str {
     }
 }
 
-unsafe impl Marshal for Option<&str> {
+impl Marshal for Option<&str> {
     fn calc_size(&self) -> usize {
         if let Some(value) = self {
             value.calc_size()
@@ -290,7 +292,7 @@ unsafe impl Marshal for Option<&str> {
         }
     }
 }
-unsafe impl<'a> Unmarshal<'a> for Option<&'a str> {
+impl<'a> Unmarshal<'a> for Option<&'a str> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         let size = reader.read::<u32>()? as usize;
         Ok((size != 0).then_some(unsafe {
@@ -303,7 +305,7 @@ unsafe impl<'a> Unmarshal<'a> for Option<&'a str> {
     }
 }
 
-unsafe impl<'a> Marshal for GenericNewId<'a> {
+impl<'a> Marshal for GenericNewId<'a> {
     fn calc_size(&self) -> usize {
         self.interface.calc_size() + 8
     }
@@ -315,7 +317,7 @@ unsafe impl<'a> Marshal for GenericNewId<'a> {
         }
     }
 }
-unsafe impl<'a> Unmarshal<'a> for GenericNewId<'a> {
+impl<'a> Unmarshal<'a> for GenericNewId<'a> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         Ok(Self {
             interface: reader.read()?,
@@ -325,7 +327,7 @@ unsafe impl<'a> Unmarshal<'a> for GenericNewId<'a> {
     }
 }
 
-unsafe impl Marshal for &[u8] {
+impl Marshal for &[u8] {
     fn calc_size(&self) -> usize {
         4 + aligned(4, self.len())
     }
@@ -337,7 +339,7 @@ unsafe impl Marshal for &[u8] {
         }
     }
 }
-unsafe impl<'a> Unmarshal<'a> for &'a [u8] {
+impl<'a> Unmarshal<'a> for &'a [u8] {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         let size = reader.read::<u32>()? as usize;
         let res = reader
@@ -350,7 +352,7 @@ unsafe impl<'a> Unmarshal<'a> for &'a [u8] {
     }
 }
 
-unsafe impl Marshal for Fd {
+impl Marshal for Fd {
     fn calc_size(&self) -> usize {
         0
     }
@@ -358,14 +360,14 @@ unsafe impl Marshal for Fd {
         _ = writer;
     }
 }
-unsafe impl Unmarshal<'_> for Fd {
+impl Unmarshal<'_> for Fd {
     fn unmarshal(reader: &mut Reader) -> unmarshal::Result<Self> {
         _ = reader;
         Ok(Self)
     }
 }
 
-unsafe impl<P: Marshal, T: MessageBody + Marshal> Marshal for Message<P, T> {
+impl<P: Marshal, T: MessageBody + Marshal> Marshal for Message<P, T> {
     fn calc_size(&self) -> usize {
         self.header.calc_size() + self.body.calc_size()
     }
@@ -376,9 +378,7 @@ unsafe impl<P: Marshal, T: MessageBody + Marshal> Marshal for Message<P, T> {
         }
     }
 }
-unsafe impl<'a, P: Proxy + Unmarshal<'a>, T: MessageBody + Unmarshal<'a>> Unmarshal<'a>
-    for Message<P, T>
-{
+impl<'a, P: Proxy + Unmarshal<'a>, T: MessageBody + Unmarshal<'a>> Unmarshal<'a> for Message<P, T> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         Ok(Self {
             header: reader.read()?,
@@ -388,18 +388,18 @@ unsafe impl<'a, P: Proxy + Unmarshal<'a>, T: MessageBody + Unmarshal<'a>> Unmars
 }
 
 /// Has a related `Request` enum
-pub unsafe trait HasRequests<'a> {
+pub trait HasRequests<'a> {
     /// Related `Request` type
     type Request: MessageEnum<'a>;
 }
 /// Has a related `Event` enum
-pub unsafe trait HasEvents<'a> {
+pub trait HasEvents<'a> {
     /// Related `Event` type
     type Event: MessageEnum<'a>;
 }
 
 /// Interface of a proxy
-pub unsafe trait Proxy: Copy + Debug + From<Object> + Into<Object> {
+pub trait Proxy: Copy + Debug + From<Object> + Into<Object> {
     // TODO: use From and Into
 
     /// Create a proxy from an object
@@ -411,10 +411,11 @@ pub unsafe trait Proxy: Copy + Debug + From<Object> + Into<Object> {
         self.into()
     }
 
-    // TODO: remove
     #[doc(hidden)]
+    #[deprecated]
     const REQUEST_IS_DESTRUCTOR: &'static [bool];
     #[doc(hidden)]
+    #[deprecated]
     const EVENT_IS_DESTRUCTOR: &'static [bool];
 
     /// Interface information of proxy
@@ -450,7 +451,7 @@ pub fn socket_path_from_env() -> PathBuf {
         let xdg_runtime_dir = env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| format!("/run/user/{}", unsafe { getuid() }).into());
-        PathBuf::from(xdg_runtime_dir).join(wayland_display)
+        xdg_runtime_dir.join(wayland_display)
     }
 }
 

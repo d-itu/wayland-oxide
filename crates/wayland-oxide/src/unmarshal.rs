@@ -11,7 +11,7 @@ use thiserror::Error;
 /// Errors may occur when decoding
 #[derive(Error, Debug)]
 pub enum Error {
-    ///
+    /// Not enough data to decode
     #[error("not enough data")]
     NotEnoughData,
 
@@ -20,16 +20,16 @@ pub enum Error {
     NullObject,
 }
 
-///
+/// Result of decoding
 pub type Result<T> = result::Result<T, Error>;
 
-///
-pub unsafe trait Unmarshal<'a>: Sized {
-    ///
+/// A type that can be decoded from a buffer of encoded messages.
+pub trait Unmarshal<'a>: Sized {
+    /// Decode a type from a buffer of encoded messages.
     fn unmarshal(reader: &mut Reader<'a>) -> Result<Self>;
 }
 
-///
+/// A reader of encoded messages.
 #[derive(Clone, Copy)]
 pub struct Reader<'a> {
     buf: &'a [u8],
@@ -41,9 +41,9 @@ impl<'a> From<&'a [u8]> for Reader<'a> {
     }
 }
 
-impl<'a> Into<&'a [u8]> for Reader<'a> {
-    fn into(self) -> &'a [u8] {
-        self.into_inner()
+impl<'a> From<Reader<'a>> for &'a [u8] {
+    fn from(val: Reader<'a>) -> Self {
+        val.into_inner()
     }
 }
 

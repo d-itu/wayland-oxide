@@ -11,10 +11,8 @@ use tuplez::{Tuple, Unit};
 
 use crate::{Message, MessageBody};
 
-// TODO: add a trait for messages with fixed size
-
 /// Types can be encoded to a message buffer.
-pub unsafe trait Marshal {
+pub trait Marshal {
     /// Calculate byte size of a message. Size is used for allocating message buffer.
     fn calc_size(&self) -> usize;
     /// Marshal to a [`Writer`].
@@ -25,7 +23,7 @@ pub unsafe trait Marshal {
     unsafe fn marshal(&self, writer: &mut Writer);
 }
 
-///
+/// A writer for encoding messages.
 #[derive(Clone, Copy)]
 pub struct Writer<'a> {
     ptr: *mut u8,
@@ -68,7 +66,10 @@ impl Writer<'_> {
             ))
         }
     }
+    /// Write a value
+    /// # Safety
     ///
+    /// Caller should ensure internal pointer of `self` points to a buffer with capacity not smaller than `value.calc_size()`
     pub unsafe fn write<T: Marshal + ?Sized>(&mut self, value: &T) {
         unsafe {
             value.marshal(self);
@@ -76,7 +77,7 @@ impl Writer<'_> {
     }
 }
 
-unsafe impl Marshal for Unit {
+impl Marshal for Unit {
     fn calc_size(&self) -> usize {
         0
     }
@@ -85,7 +86,7 @@ unsafe impl Marshal for Unit {
         _ = writer;
     }
 }
-unsafe impl<X: Marshal, Xs: Marshal> Marshal for Tuple<X, Xs> {
+impl<X: Marshal, Xs: Marshal> Marshal for Tuple<X, Xs> {
     fn calc_size(&self) -> usize {
         self.0.calc_size() + self.1.calc_size()
     }
@@ -99,7 +100,7 @@ unsafe impl<X: Marshal, Xs: Marshal> Marshal for Tuple<X, Xs> {
 }
 
 /// A type contains zero or more complete messages.
-pub unsafe trait Complete: Marshal {
+pub trait Complete: Marshal {
     #[must_use]
     /// Returns a `Box<[u8]>` of encoded data
     fn marshal_to_boxed_slice(&self) -> Box<[u8]> {
@@ -121,6 +122,6 @@ pub unsafe trait Complete: Marshal {
     }
 }
 
-unsafe impl<P: Marshal, T: Marshal + MessageBody> Complete for Message<P, T> {}
-unsafe impl Complete for Unit {}
-unsafe impl<X: Complete, Xs: Complete> Complete for Tuple<X, Xs> {}
+impl<P: Marshal, T: Marshal + MessageBody> Complete for Message<P, T> {}
+impl Complete for Unit {}
+impl<X: Complete, Xs: Complete> Complete for Tuple<X, Xs> {}

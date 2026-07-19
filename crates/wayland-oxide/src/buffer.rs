@@ -1,4 +1,4 @@
-//!
+//! Buffer for reading messages
 
 use core::{
     marker::PhantomData,
@@ -13,6 +13,12 @@ use crate::{Header, Reader};
 pub struct Buffer {
     data: [MaybeUninit<u8>; 1 << 16],
     filled: usize,
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // TODO: support core::io::BorrowedCursor
@@ -76,7 +82,7 @@ impl Buffer {
         Ok(())
     }
 
-    ///
+    /// Drain the buffer into an iterator of messages
     pub fn drain<'b>(&'b mut self) -> Iter<'b> {
         Iter {
             buffer: NonNull::from_ref(self),
@@ -86,17 +92,17 @@ impl Buffer {
     }
 }
 
-///
+/// A message with object, opcode and body
 pub struct Message<'b> {
-    ///
+    /// The object id
     pub object: u32,
-    ///
+    /// The opcode
     pub opcode: u16,
-    ///
+    /// The body of the message
     pub reader: Reader<'b>,
 }
 
-///
+/// Iterator of messages
 pub struct Iter<'b> {
     buffer: NonNull<Buffer>,
     offset: usize,
@@ -126,10 +132,10 @@ impl<'b> Iterator for Iter<'b> {
         let (body, _) = reader.into_inner().split_at_checked(body_size as _)?;
         self.offset += size as usize;
 
-        return Some(Message {
+        Some(Message {
             object,
             opcode,
             reader: Reader::new(body),
-        });
+        })
     }
 }

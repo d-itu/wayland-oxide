@@ -148,9 +148,9 @@ impl<'de> Deserialize<'de> for Number {
         if bytes[0] == b'0' && bytes.get(1).copied() == Some(b'x') {
             u32::from_str_radix(&s[2..], 16)
         } else {
-            u32::from_str_radix(&s, 10)
+            s.parse()
         }
         .map(Number)
-        .map_err(|e| serde::de::Error::custom(e))
+        .map_err(serde::de::Error::custom)
     }
 }
