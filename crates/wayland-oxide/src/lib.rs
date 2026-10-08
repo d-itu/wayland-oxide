@@ -199,9 +199,9 @@ unsafe impl Trivial for WireHeader {}
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Header<P = Object, O = u16> {
-    pub object: P,
-    pub opcode: O,
-    pub size: u16,
+    object: P,
+    opcode: O,
+    size: u16,
 }
 impl<P: Copy + Into<Object>, O: Opcode> Marshal for Header<P, O> {
     fn calc_size(&self) -> usize {
@@ -229,17 +229,30 @@ pub trait MessageEnum<'a> {
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Message<P, T: MessageBody> {
-    pub header: Header<P, T::Opcode>,
-    pub body: T,
+    header: Header<P, T::Opcode>,
+    body: T,
 }
 
 impl<P, T: MessageBody + Marshal> Message<P, T> {
+    /// Construct a message.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the total encoded size exceeds 65532 bytes or is not a multiple
+    /// of four.
     pub fn new(id: P, body: T) -> Self {
+        fn checked_size(body_size: usize) -> u16 {
+            assert!(
+                body_size <= 65532 - 8 && body_size.is_multiple_of(4),
+                "invalid message size"
+            );
+            (body_size + 8) as u16
+        }
         Self {
             header: Header {
                 object: id,
                 opcode: T::OPCODE,
-                size: body.calc_size() as u16 + 8,
+                size: checked_size(body.calc_size()),
             },
             body,
         }

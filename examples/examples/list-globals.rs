@@ -24,7 +24,7 @@ fn main() {
             object,
             opcode,
             reader,
-        } in buffer.drain()
+        } in buffer.drain().map(Result::unwrap)
         {
             match object {
                 1 => match wl_display::Event::new(opcode, reader) {

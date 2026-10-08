@@ -16,7 +16,7 @@ fn buffer_keeps_unknown_opcodes_available_for_dispatch() {
     // All bytes being advanced over were initialized above.
     unsafe { buffer.advance(bytes.len()) };
     let mut iter = buffer.drain();
-    let message = iter.next().unwrap();
+    let message = iter.next().unwrap().unwrap();
     assert_eq!(message.object, 1);
     assert_eq!(message.opcode, u16::MAX);
     assert!(message.reader.into_inner().is_empty());

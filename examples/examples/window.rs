@@ -418,7 +418,7 @@ impl Dispatcher {
             object,
             opcode,
             reader,
-        } in buffer.drain()
+        } in buffer.drain().map(Result::unwrap)
         {
             let object: Object = object.try_into().unwrap();
             arena.0.get(object).unwrap()(self, arena, object, opcode, reader);

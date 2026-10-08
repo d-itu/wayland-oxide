@@ -109,14 +109,22 @@ pub struct Message<'b> {
     pub reader: Reader<'b>,
 }
 
+/// An invalid wire message length. Message boundaries cannot be recovered reliably.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("invalid message size: {0}")]
+pub struct InvalidMessageSize(pub u16);
+
 /// Iterator of messages borrowing the buffer's data.
+///
+/// An invalid length yields one error and ends this iterator without consuming
+/// the invalid message. The caller should terminate the connection.
 pub struct Iter<'b> {
     remaining: &'b [u8],
     consumed: &'b mut usize,
 }
 
 impl<'b> Iterator for Iter<'b> {
-    type Item = Message<'b>;
+    type Item = Result<Message<'b>, InvalidMessageSize>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut reader = Reader::new(self.remaining);
@@ -125,15 +133,19 @@ impl<'b> Iterator for Iter<'b> {
         let opcode = header.opcode();
         let size = header.size();
 
+        if size < 8 || !size.is_multiple_of(4) {
+            self.remaining = &[];
+            return Some(Err(InvalidMessageSize(size)));
+        }
         let body_size = size - 8;
         let (body, remaining) = reader.into_inner().split_at_checked(body_size as _)?;
         self.remaining = remaining;
         *self.consumed += size as usize;
 
-        Some(Message {
+        Some(Ok(Message {
             object,
             opcode,
             reader: Reader::new(body),
-        })
+        }))
     }
 }
