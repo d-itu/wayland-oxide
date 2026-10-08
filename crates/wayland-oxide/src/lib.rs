@@ -154,10 +154,48 @@ pub struct GenericNewId<S> {
 }
 
 #[doc(hidden)]
-pub unsafe trait Opcode {}
-unsafe impl Opcode for u16 {}
+pub trait Opcode: Sized {
+    fn as_u16(&self) -> u16;
+}
+impl Opcode for u16 {
+    fn as_u16(&self) -> u16 {
+        *self
+    }
+}
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct WireHeader {
+    pub object: u32,
+    opcode_and_size: u32,
+}
+
+impl WireHeader {
+    const fn new(object: u32, opcode: u16, size: u16) -> Self {
+        Self {
+            object,
+            opcode_and_size: ((size as u32) << 16) | opcode as u32,
+        }
+    }
+
+    pub(crate) const fn opcode(self) -> u16 {
+        self.opcode_and_size as u16
+    }
+
+    pub(crate) const fn size(self) -> u16 {
+        (self.opcode_and_size >> 16) as u16
+    }
+}
+
+const _: () = {
+    assert!(mem::size_of::<WireHeader>() == 8);
+    assert!(mem::offset_of!(WireHeader, object) == 0);
+    assert!(mem::offset_of!(WireHeader, opcode_and_size) == 4);
+};
+
+// Both fields accept every bit pattern, and the layout assertions exclude padding.
+unsafe impl Trivial for WireHeader {}
+
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Header<P = Object, O = u16> {
@@ -165,17 +203,14 @@ pub struct Header<P = Object, O = u16> {
     pub opcode: O,
     pub size: u16,
 }
-impl<'a, P: Unmarshal<'a>, O: Opcode> Unmarshal<'a> for Header<P, O> {
-    fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
-        Ok(Self {
-            object: reader.read()?,
-            opcode: reader
-                .read_trivial()
-                .ok_or(unmarshal::Error::NotEnoughData)?,
-            size: reader
-                .read_trivial()
-                .ok_or(unmarshal::Error::NotEnoughData)?,
-        })
+impl<P: Copy + Into<Object>, O: Opcode> Marshal for Header<P, O> {
+    fn calc_size(&self) -> usize {
+        mem::size_of::<WireHeader>()
+    }
+
+    unsafe fn marshal(&self, writer: &mut Writer) {
+        let wire = WireHeader::new(self.object.into().as_u32(), self.opcode.as_u16(), self.size);
+        unsafe { writer.write(&wire) };
     }
 }
 
@@ -231,7 +266,6 @@ unsafe impl Trivial for i32 {}
 unsafe impl Trivial for u32 {}
 unsafe impl Trivial for Fixed {}
 unsafe impl Trivial for Option<Object> {}
-unsafe impl<P, T: Opcode> TrivialMarshal for Header<P, T> {}
 
 impl<T: TrivialMarshal> Marshal for T {
     fn calc_size(&self) -> usize {
@@ -428,7 +462,7 @@ impl Unmarshal<'_> for Fd {
     }
 }
 
-impl<P: Marshal, T: MessageBody + Marshal> Marshal for Message<P, T> {
+impl<P: Copy + Into<Object>, T: MessageBody + Marshal> Marshal for Message<P, T> {
     fn calc_size(&self) -> usize {
         self.header.calc_size() + self.body.calc_size()
     }
@@ -437,14 +471,6 @@ impl<P: Marshal, T: MessageBody + Marshal> Marshal for Message<P, T> {
             writer.write(&self.header);
             writer.write(&self.body);
         }
-    }
-}
-impl<'a, P: Proxy + Unmarshal<'a>, T: MessageBody + Unmarshal<'a>> Unmarshal<'a> for Message<P, T> {
-    fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
-        Ok(Self {
-            header: reader.read()?,
-            body: reader.read()?,
-        })
     }
 }
 

@@ -9,7 +9,7 @@ use core::{
 use alloc::{boxed::Box, vec::Vec};
 use tuplez::{Tuple, Unit};
 
-use crate::{Message, MessageBody};
+use crate::{Message, MessageBody, Object};
 
 /// Types can be encoded to a message buffer.
 pub trait Marshal {
@@ -118,6 +118,6 @@ pub trait Complete: Marshal {
     }
 }
 
-impl<P: Marshal, T: Marshal + MessageBody> Complete for Message<P, T> {}
+impl<P: Copy + Into<Object>, T: Marshal + MessageBody> Complete for Message<P, T> {}
 impl Complete for Unit {}
 impl<X: Complete, Xs: Complete> Complete for Tuple<X, Xs> {}

@@ -71,6 +71,8 @@ impl ToTokens for WithSide<&Interface> {
 
         let requests_enum_match = enum_match(requests);
         let events_enum_match = enum_match(events);
+        let request_opcode_impl = opcode_impl("RequestOpcode");
+        let event_opcode_impl = opcode_impl("EventOpcode");
 
         let request_is_destructor = requests
             .iter()
@@ -135,7 +137,7 @@ impl ToTokens for WithSide<&Interface> {
                         }
                     }
                 }
-                unsafe impl ::wayland_oxide::Opcode for RequestOpcode {}
+                #request_opcode_impl
 
                 #[repr(u16)]
                 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -155,7 +157,7 @@ impl ToTokens for WithSide<&Interface> {
                         }
                     }
                 }
-                unsafe impl ::wayland_oxide::Opcode for EventOpcode {}
+                #event_opcode_impl
 
                 pub type Proxy = super::#proxy;
                 impl Proxy {
@@ -200,6 +202,17 @@ impl ToTokens for WithSide<&Interface> {
                 };
             }
         });
+    }
+}
+
+fn opcode_impl(name: &str) -> TokenStream {
+    let name = Ident(name);
+    quote! {
+        impl ::wayland_oxide::Opcode for #name {
+            fn as_u16(&self) -> u16 {
+                *self as u16
+            }
+        }
     }
 }
 

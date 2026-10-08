@@ -6,7 +6,7 @@ use core::{
     ptr::{self, NonNull},
 };
 
-use crate::{Header, Reader};
+use crate::{Reader, WireHeader};
 
 /// Stack-allocated message buffer, with a capaciy of 64KB, which is the maximum possible size of a message.
 /// Works like [`core::io::BorrowedBuf::filled`]
@@ -118,11 +118,10 @@ impl<'b> Iterator for Iter<'b> {
         let buffer = unsafe { self.buffer.as_ref() };
         let data = unsafe { buffer.filled().get_unchecked(self.offset..) };
         let mut reader = Reader::new(data);
-        let Header {
-            object,
-            opcode,
-            size,
-        }: Header<u32> = reader.read_trivial()?;
+        let header: WireHeader = reader.read_trivial()?;
+        let object = header.object;
+        let opcode = header.opcode();
+        let size = header.size();
 
         let body_size = size - 8;
         let (body, _) = reader.into_inner().split_at_checked(body_size as _)?;
