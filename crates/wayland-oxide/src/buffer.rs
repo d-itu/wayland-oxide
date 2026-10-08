@@ -41,8 +41,8 @@ impl Buffer {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that the first `n` bytes of the cursor have been properly
-    /// initialised.
+    /// The caller must ensure that `n` does not exceed the unfilled region's length
+    /// and that its first `n` bytes have been initialized.
     pub const unsafe fn advance(&mut self, n: usize) {
         self.filled += n;
     }
@@ -68,16 +68,6 @@ impl Buffer {
         };
         self.filled = count;
     }
-    /// Fill the buffer with a reader implementing [`std::io::Read`]
-    #[cfg(feature = "std")]
-    pub fn fill(&mut self, reader: &mut impl std::io::Read) -> std::io::Result<()> {
-        unsafe {
-            let n = reader.read(self.unfilled().assume_init_mut())?;
-            self.advance(n);
-        }
-        Ok(())
-    }
-
     /// Drain the buffer into an iterator of messages
     pub fn drain<'b>(&'b mut self) -> Iter<'b> {
         Iter {

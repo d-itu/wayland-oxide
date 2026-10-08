@@ -2,6 +2,7 @@ use std::{io::Write as _, os::unix::net::UnixStream, process};
 
 use tuplez::tuple;
 use wayland_oxide::{Buffer, Complete, MessageEnum, Object, buffer::Message};
+use wayland_oxide_examples::receive;
 
 include!(concat!(env!("OUT_DIR"), "/wayland.rs"));
 
@@ -18,7 +19,7 @@ fn main() {
 
     let mut buffer = Buffer::new();
     loop {
-        buffer.fill(&mut socket).unwrap();
+        receive(&socket, &mut buffer).unwrap();
         for Message {
             object,
             opcode,

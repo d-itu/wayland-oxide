@@ -14,6 +14,7 @@ use wayland_oxide::{
     buffer::Message,
     slab::{Client, Slab, TaggedUnion},
 };
+use wayland_oxide_examples::receive;
 
 include!(concat!(env!("OUT_DIR"), "/wayland.rs"));
 
@@ -223,7 +224,7 @@ fn main() {
         .unwrap();
 
     loop {
-        buffer.fill(&mut socket).unwrap();
+        receive(&socket, &mut buffer).unwrap();
         dispatcher.dispatch_all(&mut buffer, &mut arena);
         if dispatcher.done {
             break;
@@ -264,7 +265,7 @@ fn main() {
     let mut ptr: *mut c_void = ptr::null_mut();
     let mut len = 0;
     'outer: loop {
-        buffer.fill(&mut socket).unwrap();
+        receive(&socket, &mut buffer).unwrap();
         dispatcher.dispatch_all(&mut buffer, &mut arena);
         dispatcher.flush(&mut socket);
 
