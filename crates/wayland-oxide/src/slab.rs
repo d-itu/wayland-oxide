@@ -1,5 +1,8 @@
 //! Slab allocator for objects
 
+#[cfg(test)]
+mod tests;
+
 use core::{cmp::Ordering, hint, marker::PhantomData, mem};
 
 use alloc::{vec, vec::Vec};
@@ -130,6 +133,7 @@ mod private {
     pub trait Side {
         const VEC_OFFSET: usize;
         const SLOT_OFFSET: usize;
+        const SLOT_COUNT: usize;
         type Peer: Side;
     }
 }
@@ -138,11 +142,13 @@ use private::Side;
 impl private::Side for Client {
     const VEC_OFFSET: usize = 0;
     const SLOT_OFFSET: usize = 1;
+    const SLOT_COUNT: usize = ID_SPACE_MASK as usize - 1;
     type Peer = Server;
 }
 impl private::Side for Server {
     const VEC_OFFSET: usize = 1;
     const SLOT_OFFSET: usize = ID_SPACE_MASK as _;
+    const SLOT_COUNT: usize = (u32::MAX - ID_SPACE_MASK) as usize + 1;
     type Peer = Client;
 }
 
@@ -184,6 +190,15 @@ fn slab_try_remove<E: Entry>(
     None
 }
 
+fn object_id<S: Side>(index: usize) -> Option<Object> {
+    if index >= S::SLOT_COUNT {
+        return None;
+    }
+    // SAFETY: The checked index and side offset produce a nonzero u32 within
+    // this side's namespace, without overflowing usize or narrowing the value.
+    Some(unsafe { Object::from_u32((index + S::SLOT_OFFSET) as u32) })
+}
+
 impl<E: Entry, S: private::Side> Slab<E, S> {
     fn push(&mut self, value: E::Value) {
         let index = self.next_free;
@@ -198,11 +213,14 @@ impl<E: Entry, S: private::Side> Slab<E, S> {
             *entry = value.into();
         }
     }
-    /// Insert a new object
-    pub fn insert(&mut self, data: E::Value) -> Object {
-        let id = self.next_free + S::SLOT_OFFSET;
+    /// Insert a new object, reusing a vacant slot when available.
+    ///
+    /// Returns `None` without changing the slab if its object ID namespace is
+    /// exhausted. The supplied value is dropped in that case.
+    pub fn insert(&mut self, data: E::Value) -> Option<Object> {
+        let object = object_id::<S>(self.next_free)?;
         self.push(data);
-        unsafe { Object::from_u32(id as _) }
+        Some(object)
     }
     /// Receive an object from the peer.
     ///

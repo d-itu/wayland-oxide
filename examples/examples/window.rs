@@ -441,6 +441,9 @@ impl Arena {
         Dispatcher: Dispatch<P>,
         P: for<'a> HasEvents<'a> + From<Object>,
     {
-        self.0.insert(Dispatcher::dispatch_raw::<P>).into()
+        self.0
+            .insert(Dispatcher::dispatch_raw::<P>)
+            .expect("object ID namespace exhausted")
+            .into()
     }
 }
