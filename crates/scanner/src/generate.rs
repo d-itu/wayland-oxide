@@ -5,22 +5,16 @@ use crate::{Side, protocol::*};
 
 fn snake_to_pascal(str: &str) -> String {
     str.split("_")
-        .map(|x| {
-            x.chars()
-                .enumerate()
-                .map(|(idx, chr)| {
-                    if idx == 0 {
-                        chr.to_ascii_uppercase()
-                    } else {
-                        chr
-                    }
-                })
-                .collect::<String>()
+        .flat_map(|x| {
+            x.chars().enumerate().map(|(idx, chr)| {
+                if idx == 0 {
+                    chr.to_ascii_uppercase()
+                } else {
+                    chr
+                }
+            })
         })
-        .fold(String::new(), |mut x, y| {
-            x.push_str(&y);
-            x
-        })
+        .collect()
 }
 
 pub struct WithSide<T> {
