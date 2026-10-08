@@ -1,18 +1,14 @@
 //! Buffer for reading messages
 
-use core::{
-    marker::PhantomData,
-    mem::MaybeUninit,
-    ptr::{self, NonNull},
-};
+use core::{mem::MaybeUninit, ptr};
 
 use crate::{Reader, WireHeader};
 
-/// Stack-allocated message buffer, with a capaciy of 64KB, which is the maximum possible size of a message.
-/// Works like [`core::io::BorrowedBuf::filled`]
+/// Stack-allocated message buffer with a capacity of 64KB.
 pub struct Buffer {
     data: [MaybeUninit<u8>; 1 << 16],
-    filled: usize,
+    start: usize,
+    end: usize,
 }
 
 impl Default for Buffer {
@@ -21,101 +17,118 @@ impl Default for Buffer {
     }
 }
 
-// TODO: support core::io::BorrowedCursor
 impl Buffer {
-    /// Create an empty buffer
+    /// Create an empty buffer.
     pub const fn new() -> Self {
         Self {
             data: [MaybeUninit::uninit(); _],
-            filled: 0,
+            start: 0,
+            end: 0,
         }
     }
-    /// Return a slice of unfilled part. Useful for io syscalls.
+
+    /// Compact unconsumed data and return the unfilled region for I/O.
     ///
-    /// Remember to call advance after read operation.
+    /// Call [`Self::advance`] after initializing bytes in this region.
     pub const fn unfilled(&mut self) -> &mut [MaybeUninit<u8>] {
-        unsafe { self.data.split_at_mut_unchecked(self.filled).1 }
+        self.compact();
+        unsafe { self.data.split_at_mut_unchecked(self.end).1 }
     }
 
-    /// Advances the cursor by asserting that `n` bytes have been filled.
+    /// Move unconsumed bytes to the beginning of the buffer.
+    pub const fn compact(&mut self) {
+        if self.start != 0 {
+            let remaining = self.end - self.start;
+            // SAFETY: Both ranges are within data; copy permits overlap.
+            // Exclusive access to self prevents outstanding message borrows.
+            unsafe {
+                ptr::copy(
+                    self.data.as_ptr().add(self.start),
+                    self.data.as_mut_ptr(),
+                    remaining,
+                );
+            }
+            self.start = 0;
+            self.end = remaining;
+        }
+    }
+
+    /// Advance the filled region by `n` bytes.
     ///
     /// # Safety
     ///
     /// The caller must ensure that `n` does not exceed the unfilled region's length
     /// and that its first `n` bytes have been initialized.
     pub const unsafe fn advance(&mut self, n: usize) {
-        self.filled += n;
+        self.end += n;
     }
-    /// Returns a shared reference to the filled portion of the buffer.
+
+    /// Return the initialized, unconsumed bytes.
     pub const fn filled(&self) -> &[u8] {
+        // SAFETY: start..end lies within the initialized region.
         unsafe {
             self.data
-                .split_at_unchecked(self.filled)
+                .split_at_unchecked(self.end)
                 .0
+                .split_at_unchecked(self.start)
+                .1
                 .assume_init_ref()
         }
     }
-    /// Copy data from `offset` to the begining.
-    /// Call after consuming all the data since buffer may contain truncated message.
-    pub(crate) const fn end(&mut self, offset: usize) {
-        let count = self.filled - offset;
-        unsafe {
-            ptr::copy(
-                self.data.as_ptr().add(offset),
-                self.data.as_mut_ptr(),
-                count,
-            )
+
+    /// Drain complete messages, consuming each message as it is returned.
+    ///
+    /// Unreturned messages and incomplete data remain available for the next drain.
+    /// Returned messages can outlive the iterator; bytes are moved only on the next
+    /// call to [`Self::unfilled`].
+    pub const fn drain(&mut self) -> Iter<'_> {
+        // SAFETY: start..end contains initialized bytes. The data and consumption
+        // cursor are disjoint fields, so advancing the cursor cannot alter messages.
+        let data = unsafe {
+            self.data
+                .split_at_unchecked(self.end)
+                .0
+                .split_at_unchecked(self.start)
+                .1
+                .assume_init_ref()
         };
-        self.filled = count;
-    }
-    /// Drain the buffer into an iterator of messages
-    pub fn drain<'b>(&'b mut self) -> Iter<'b> {
         Iter {
-            buffer: NonNull::from_ref(self),
-            offset: 0,
-            marker: PhantomData,
+            remaining: data,
+            consumed: &mut self.start,
         }
     }
 }
 
-/// A message with object, opcode and body
+/// A message with object, opcode and body.
 pub struct Message<'b> {
-    /// The object id
+    /// The object id.
     pub object: u32,
-    /// The opcode
+    /// The opcode.
     pub opcode: u16,
-    /// The body of the message
+    /// The body of the message.
     pub reader: Reader<'b>,
 }
 
-/// Iterator of messages
+/// Iterator of messages borrowing the buffer's data.
 pub struct Iter<'b> {
-    buffer: NonNull<Buffer>,
-    offset: usize,
-    marker: PhantomData<&'b Buffer>,
-}
-
-impl Drop for Iter<'_> {
-    fn drop(&mut self) {
-        unsafe { self.buffer.as_mut() }.end(self.offset)
-    }
+    remaining: &'b [u8],
+    consumed: &'b mut usize,
 }
 
 impl<'b> Iterator for Iter<'b> {
     type Item = Message<'b>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let buffer = unsafe { self.buffer.as_ref() };
-        let data = unsafe { buffer.filled().get_unchecked(self.offset..) };
-        let mut reader = Reader::new(data);
+        let mut reader = Reader::new(self.remaining);
         let header: WireHeader = reader.read_trivial()?;
         let object = header.object;
         let opcode = header.opcode();
         let size = header.size();
 
         let body_size = size - 8;
-        let (body, _) = reader.into_inner().split_at_checked(body_size as _)?;
-        self.offset += size as usize;
+        let (body, remaining) = reader.into_inner().split_at_checked(body_size as _)?;
+        self.remaining = remaining;
+        *self.consumed += size as usize;
 
         Some(Message {
             object,
