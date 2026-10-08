@@ -8,6 +8,7 @@ use core::{
     fmt::{self, Debug, Display, Formatter},
     mem,
     num::NonZeroU32,
+    str::{self, Utf8Error},
 };
 #[cfg(feature = "std")]
 use std::{env, ffi::c_int, os::unix::ffi::OsStrExt as _, path::PathBuf};
@@ -142,9 +143,9 @@ pub type NewId = Object;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// A new id without specified interface
-pub struct GenericNewId<'a> {
-    /// Interface name
-    pub interface: &'a str,
+pub struct GenericNewId<S> {
+    /// Interface name: `&str` when encoding, [`WireString`] when decoding.
+    pub interface: S,
     /// Interface version
     pub version: u32,
     /// new_id value
@@ -245,6 +246,40 @@ impl<T: TrivialUnmarshal> Unmarshal<'_> for T {
     }
 }
 
+/// A borrowed wire string, excluding its terminating NUL and alignment padding.
+///
+/// Decoding checks the terminator but does not validate UTF-8 or reject interior
+/// NUL bytes. Use [`Self::to_str`] to validate UTF-8 when text is needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WireString<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> WireString<'a> {
+    /// Return the payload bytes without the terminating NUL or padding.
+    pub const fn as_bytes(self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Validate UTF-8 and borrow the payload as text.
+    pub fn to_str(self) -> Result<&'a str, Utf8Error> {
+        str::from_utf8(self.bytes)
+    }
+
+    fn read_payload(reader: &mut Reader<'a>, size: usize) -> unmarshal::Result<Self> {
+        let bytes = reader
+            .read_bytes(size)
+            .ok_or(unmarshal::Error::NotEnoughData)?;
+        let Some((&0, bytes)) = bytes.split_last() else {
+            return Err(unmarshal::Error::InvalidString);
+        };
+        reader
+            .skip(align_padding(4, size))
+            .ok_or(unmarshal::Error::NotEnoughData)?;
+        Ok(Self { bytes })
+    }
+}
+
 impl Marshal for &str {
     fn calc_size(&self) -> usize {
         4 + aligned(4, self.len() + 1)
@@ -259,20 +294,10 @@ impl Marshal for &str {
         }
     }
 }
-impl<'a> Unmarshal<'a> for &'a str {
+impl<'a> Unmarshal<'a> for WireString<'a> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         let size = reader.read::<u32>()? as usize;
-        let res = unsafe {
-            str::from_utf8_unchecked(
-                reader
-                    .read_bytes(size - 1)
-                    .ok_or(unmarshal::Error::NotEnoughData)?,
-            )
-        };
-        reader
-            .skip(1 + align_padding(4, size))
-            .ok_or(unmarshal::Error::NotEnoughData)?;
-        Ok(res)
+        Self::read_payload(reader, size)
     }
 }
 
@@ -292,20 +317,18 @@ impl Marshal for Option<&str> {
         }
     }
 }
-impl<'a> Unmarshal<'a> for Option<&'a str> {
+impl<'a> Unmarshal<'a> for Option<WireString<'a>> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         let size = reader.read::<u32>()? as usize;
-        Ok((size != 0).then_some(unsafe {
-            str::from_utf8_unchecked(
-                reader
-                    .read_bytes(size)
-                    .ok_or(unmarshal::Error::NotEnoughData)?,
-            )
-        }))
+        if size == 0 {
+            Ok(None)
+        } else {
+            WireString::read_payload(reader, size).map(Some)
+        }
     }
 }
 
-impl<'a> Marshal for GenericNewId<'a> {
+impl<S: Marshal> Marshal for GenericNewId<S> {
     fn calc_size(&self) -> usize {
         self.interface.calc_size() + 8
     }
@@ -317,7 +340,7 @@ impl<'a> Marshal for GenericNewId<'a> {
         }
     }
 }
-impl<'a> Unmarshal<'a> for GenericNewId<'a> {
+impl<'a> Unmarshal<'a> for GenericNewId<WireString<'a>> {
     fn unmarshal(reader: &mut Reader<'a>) -> unmarshal::Result<Self> {
         Ok(Self {
             interface: reader.read()?,

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="string_test">
+  <interface name="string_test" version="1">
+    <request name="send">
+      <arg name="text" type="string"/>
+      <arg name="optional" type="string" allow-null="true"/>
+      <arg name="id" type="new_id"/>
+      <arg name="marker" type="uint"/>
+    </request>
+    <event name="receive">
+      <arg name="text" type="string"/>
+      <arg name="optional" type="string" allow-null="true"/>
+      <arg name="id" type="new_id"/>
+      <arg name="marker" type="uint"/>
+    </event>
+  </interface>
+</protocol>

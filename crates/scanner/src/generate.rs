@@ -316,6 +316,7 @@ impl ToTokens for Description {
 struct WithLifetime<'a> {
     arg: &'a Arg,
     lifetime: TokenStream,
+    decoding: bool,
 }
 
 struct ArgResult<'a> {
@@ -335,6 +336,11 @@ impl<'a> WithLifetime<'a> {
             ref r#enum,
         } = self.arg;
         let lifetime = &self.lifetime;
+        let string = if self.decoding {
+            quote!(::wayland_oxide::WireString<#lifetime>)
+        } else {
+            quote!(&#lifetime str)
+        };
         let ty = match r#type {
             Type::Int => quote!(i32),
             Type::Uint => match r#enum {
@@ -353,8 +359,8 @@ impl<'a> WithLifetime<'a> {
             },
             Type::Fixed => quote!(::wayland_oxide::Fixed),
             Type::String => match allow_null {
-                true => quote!(Option<&#lifetime str>),
-                false => quote!(&#lifetime str),
+                true => quote!(Option<#string>),
+                false => string.clone(),
             },
             Type::Object => {
                 let proxy = match interface {
@@ -374,7 +380,7 @@ impl<'a> WithLifetime<'a> {
                     let iface = Ident(iface);
                     quote!(super::#iface::Proxy)
                 }
-                None => quote!(::wayland_oxide::GenericNewId<#lifetime>),
+                None => quote!(::wayland_oxide::GenericNewId<#string>),
             },
             Type::Array => quote!(&#lifetime [u8]),
             Type::Fd => quote!(::wayland_oxide::Fd),
@@ -408,10 +414,11 @@ struct StructDef<'a> {
     description: Option<&'a Description>,
     lifetime: Option<TokenStream>,
     args: &'a [Arg],
+    decoding: bool,
 }
 
 impl Message {
-    fn struct_def(&self, kind: MessageKind) -> StructDef<'_> {
+    fn struct_def(&self, kind: MessageKind, decoding: bool) -> StructDef<'_> {
         let Self {
             name,
             description,
@@ -430,6 +437,7 @@ impl Message {
             description: description.as_ref(),
             lifetime,
             args,
+            decoding,
         }
     }
 }
@@ -442,6 +450,7 @@ impl ToTokens for StructDef<'_> {
             description,
             lifetime,
             args,
+            decoding,
         } = self;
         let args = args
             .iter()
@@ -449,6 +458,7 @@ impl ToTokens for StructDef<'_> {
                 WithLifetime {
                     arg,
                     lifetime: quote!('a),
+                    decoding: *decoding,
                 }
                 .generate()
             })
@@ -485,7 +495,7 @@ impl ToTokens for Marshal<(&Message, MessageKind)> {
             ref lifetime,
             args,
             ..
-        } = message.struct_def(kind);
+        } = message.struct_def(kind, false);
         struct_def.to_tokens(tokens);
         let args = args.iter().map(|arg| Ident(&arg.name));
         let args1 = args.clone();
@@ -507,14 +517,15 @@ impl ToTokens for MarshalMethods<&Message> {
         let Message { name, args, .. } = self.0;
         let message = Ident(snake_to_pascal(name));
         let name = Ident(name);
-        let lifetime = args.iter().any(|x| x.is_reference()).then(|| quote!(<'_>));
+        let lifetime = args.iter().any(|x| x.is_reference()).then(|| quote!(<'a>));
         let params = args.iter().map(|arg| Ident(&arg.name));
         let args = args
             .iter()
             .map(|arg| {
                 WithLifetime {
                     arg,
-                    lifetime: quote!('_),
+                    lifetime: quote!('a),
+                    decoding: false,
                 }
                 .generate()
             })
@@ -525,7 +536,7 @@ impl ToTokens for MarshalMethods<&Message> {
             });
         tokens.extend(quote! {
             #[must_use]
-            pub fn #name(self, #(#args)*) -> ::wayland_oxide::Message<Proxy, #message #lifetime> {
+            pub fn #name #lifetime(self, #(#args)*) -> ::wayland_oxide::Message<Proxy, #message #lifetime> {
                 ::wayland_oxide::Message::new(self, #message { #(#params,)* })
             }
         });
@@ -557,7 +568,7 @@ impl ToTokens for Unmarshal<(&Message, MessageKind)> {
             ref lifetime,
             args,
             ..
-        } = message.struct_def(kind);
+        } = message.struct_def(kind, true);
         struct_def.to_tokens(tokens);
         let args = args.iter().map(|arg| Ident(&arg.name));
         tokens.extend(quote! {

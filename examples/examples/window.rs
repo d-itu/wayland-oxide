@@ -40,7 +40,7 @@ struct Dispatcher {
 impl Dispatch<WlDisplay> for Dispatcher {
     fn dispatch(&mut self, slab: &mut Arena, _: WlDisplay, event: <WlDisplay as HasEvents>::Event) {
         match event {
-            wl_display::Event::Error(lazy) => panic!("{}", lazy.parse().unwrap().message),
+            wl_display::Event::Error(lazy) => panic!("{:?}", lazy.parse().unwrap().message),
             wl_display::Event::DeleteId(lazy) => {
                 slab.0.remove(lazy.parse().unwrap().id.try_into().unwrap());
             }
@@ -62,6 +62,7 @@ impl Dispatch<WlRegistry> for Dispatcher {
                     interface,
                     version,
                 } = lazy.parse().unwrap();
+                let interface = interface.to_str().unwrap();
                 match interface {
                     "xdg_wm_base" => {
                         let object = arena.new_id();

@@ -27,7 +27,7 @@ fn main() {
         {
             match object {
                 1 => match wl_display::Event::new(opcode, reader) {
-                    wl_display::Event::Error(lazy) => panic!("{}", lazy.parse().unwrap().message),
+                    wl_display::Event::Error(lazy) => panic!("{:?}", lazy.parse().unwrap().message),
                     wl_display::Event::DeleteId(_) => {}
                     wl_display::Event::_Unknown(_) => unreachable!(),
                 },
@@ -38,7 +38,7 @@ fn main() {
                             interface,
                             version,
                         } = lazy.parse().unwrap();
-                        println!("{} {} v{}", name, interface, version)
+                        println!("{} {} v{}", name, interface.to_str().unwrap(), version)
                     }
                     wl_registry::Event::GlobalRemove(_) => {}
                     wl_registry::Event::_Unknown(_) => unreachable!(),

@@ -15,6 +15,10 @@ pub enum Error {
     #[error("not enough data")]
     NotEnoughData,
 
+    /// A non-null string is empty on the wire or lacks its terminating NUL.
+    #[error("invalid string length or terminator")]
+    InvalidString,
+
     /// Null object when an object is not optional
     #[error("null object")]
     NullObject,
