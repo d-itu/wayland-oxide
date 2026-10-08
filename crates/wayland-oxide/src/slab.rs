@@ -181,13 +181,25 @@ impl<E: Entry, S: private::Side> Slab<E, S> {
         self.push(data);
         unsafe { Object::from_u32(id as _) }
     }
-    /// Receive object from peer
+    /// Receive an object from the peer.
+    ///
+    /// Reject IDs outside the peer's namespace, skipped slots, and occupied slots.
+    /// Vacant slots may be reused.
     pub fn receive(&mut self, object: Object, data: E::Value) -> Result<(), Error> {
         let id = object.as_u32();
+        if (id >= ID_SPACE_MASK) != (S::Peer::VEC_OFFSET == Server::VEC_OFFSET) {
+            return Err(Error::InvalidId(object));
+        }
         let index = id as usize - S::Peer::SLOT_OFFSET;
         let vec = unsafe { self.storage.get_unchecked_mut(S::Peer::VEC_OFFSET) };
         match index.cmp(&vec.len()) {
-            Ordering::Less => *unsafe { vec.get_unchecked_mut(index) } = data.into(),
+            Ordering::Less => {
+                let entry = unsafe { vec.get_unchecked_mut(index) };
+                if entry.is_value() {
+                    return Err(Error::OccupiedId(object));
+                }
+                *entry = data.into();
+            }
             Ordering::Equal => vec.push(data.into()),
             Ordering::Greater => Err(Error::InvalidId(object))?,
         }
@@ -322,7 +334,10 @@ impl<E: Entry> Slab<E, Server> {
 #[derive(Error, Debug)]
 /// Errors of protocol violation by the peer
 pub enum Error {
-    /// Id is not desely allocated
+    /// The ID is outside the peer's namespace or skips an unallocated slot.
     #[error("Invalid Id: {0:?}")]
     InvalidId(Object),
+    /// The object ID is already occupied.
+    #[error("object ID is already occupied: {0:?}")]
+    OccupiedId(Object),
 }
