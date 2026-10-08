@@ -164,6 +164,9 @@ impl ToTokens for WithSide<&Interface> {
                     pub const fn new(object: ::wayland_oxide::Object) -> Self {
                         Self(object)
                     }
+                    pub const fn id(self) -> ::wayland_oxide::Object {
+                        self.0
+                    }
 
                     #marshal_methods
                 }
@@ -183,7 +186,7 @@ impl ToTokens for WithSide<&Interface> {
                         Self(value)
                     }
                 }
-                impl ::wayland_oxide::Proxy for Proxy {
+                unsafe impl ::wayland_oxide::Proxy for Proxy {
                     const REQUEST_IS_DESTRUCTOR: &'static [bool] = &[#(#request_is_destructor),*];
                     const EVENT_IS_DESTRUCTOR: &'static [bool] = &[#(#event_is_destructor),*];
 

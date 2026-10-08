@@ -485,19 +485,23 @@ pub trait HasEvents<'a> {
     type Event: MessageEnum<'a>;
 }
 
-/// Interface of a proxy
-pub trait Proxy: Copy + Debug + From<Object> + Into<Object> {
-    // TODO: use From and Into
-
-    /// Create a proxy from an object
-    fn new(object: Object) -> Self {
-        object.into()
-    }
-    /// Get object id
-    fn id(self) -> Object {
-        self.into()
-    }
-
+/// An object handle with a guaranteed wire-compatible memory representation.
+///
+/// # Safety
+///
+/// `Self` must have the same size, alignment, and representation as [`Object`],
+/// with no padding and no additional validity requirements. Every nonzero `u32`
+/// must represent a valid `Self` with that object ID.
+///
+/// `Option<Self>` must have the same size, alignment, and representation as
+/// `Option<Object>`: zero represents `None`, and every nonzero `u32` represents
+/// `Some` with that object ID. Every bit pattern must be valid, with no padding.
+/// Encoding and decoding may copy this representation directly.
+///
+/// Conversions to and from [`Object`] must preserve the represented object ID.
+/// A `#[repr(transparent)]` wrapper containing only an `Object` satisfies the
+/// layout requirements; its conversions must also preserve the ID.
+pub unsafe trait Proxy: Copy + Debug + From<Object> + Into<Object> {
     #[doc(hidden)]
     #[deprecated]
     const REQUEST_IS_DESTRUCTOR: &'static [bool];
