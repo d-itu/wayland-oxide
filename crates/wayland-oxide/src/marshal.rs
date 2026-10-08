@@ -48,14 +48,10 @@ impl Writer<'_> {
         }
     }
     pub(crate) const unsafe fn pad(&mut self, n: usize) {
-        cfg_select! {
-            debug_assertions => {
-                const ZEROS: [u8; 3] = [0; _];
-                unsafe { self.write_bytes(slice::from_raw_parts(&ZEROS[0], n)) }
-            }
-            _ => {
-                unsafe { self.ptr = self.ptr.add(n) }
-            }
+        // Initialize padding before exposing the output as bytes.
+        unsafe {
+            self.ptr.write_bytes(0, n);
+            self.ptr = self.ptr.add(n);
         }
     }
     pub(crate) const unsafe fn write_trivial<T>(&mut self, value: &T) {
