@@ -16,8 +16,28 @@ impl From<()> for Handle {
     }
 }
 
-/// Entry of slab
-pub trait Entry: Sized {
+/// A slab entry containing either a value or a vacant-slot handle.
+///
+/// # Safety
+///
+/// Implementations must uphold the following invariants, which [`Slab`] relies
+/// on when accessing values and following its free list without further checks:
+///
+/// - [`Self::vacant`] creates a vacant entry and preserves the supplied [`Handle`]
+///   exactly. [`Self::vacant_unchecked`] returns that same handle.
+/// - Converting [`Self::Value`] into `Self` creates an occupied entry containing
+///   that value.
+/// - [`Self::is_value`] accurately reports whether the entry is occupied. Shared
+///   access must not change the entry's occupied/vacant state or stored handle.
+/// - For occupied entries, [`Self::take_unchecked`] returns the stored value, and
+///   [`Self::get`] and [`Self::get_mut`] return references to it. For vacant
+///   entries, both accessors return `None`.
+/// - Calling the accessors or modifying a value through the returned references
+///   must not change the entry's occupied/vacant state or its stored handle.
+///
+/// Handles need not be validated by the entry: the slab is responsible for
+/// supplying valid free-list links, and the entry must preserve them unchanged.
+pub unsafe trait Entry: Sized {
     /// Value of entry
     type Value: Into<Self>;
 
@@ -56,7 +76,10 @@ impl<V> From<V> for TaggedUnion<V> {
         Self::Occupied(value)
     }
 }
-impl<V> Entry for TaggedUnion<V> {
+// SAFETY: The enum discriminant consistently identifies the entry state.
+// Vacant preserves its handle unchanged, and value access cannot change the
+// discriminant or access the handle. From<V> always constructs Occupied.
+unsafe impl<V> Entry for TaggedUnion<V> {
     type Value = V;
 
     fn vacant(handle: Handle) -> Self {
