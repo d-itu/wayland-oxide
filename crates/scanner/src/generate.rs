@@ -224,9 +224,18 @@ impl ToTokens for Enum {
                             #(#entries)*
                         }
                     }
+                    unsafe impl ::wayland_oxide::Trivial for #name {}
+                    impl ::wayland_oxide::ProtocolEnum for #name {
+                        type Wire = Self;
+                    }
                 }
             }
             false => {
+                let cases = entries.iter().map(|entry| {
+                    let variant = entry.ident();
+                    let value = &entry.value;
+                    quote!(#value => Ok(Self::#variant),)
+                });
                 let entries = entries.iter();
                 quote! {
                     #description
@@ -235,30 +244,45 @@ impl ToTokens for Enum {
                     pub enum #name {
                         #(#entries)*
                     }
+                    unsafe impl ::wayland_oxide::TrivialMarshal for #name {}
+                    impl ::wayland_oxide::ProtocolEnum for #name {
+                        type Wire = ::wayland_oxide::WireEnum<Self>;
+                    }
+                    impl TryFrom<u32> for #name {
+                        type Error = u32;
+
+                        fn try_from(value: u32) -> Result<Self, Self::Error> {
+                            match value {
+                                #(#cases)*
+                                value => Err(value),
+                            }
+                        }
+                    }
                 }
             }
         });
-        tokens.extend(quote! {
-            unsafe impl ::wayland_oxide::Trivial for #name {}
-        });
+    }
+}
+
+impl Entry {
+    fn ident(&self) -> Ident<String> {
+        let name = snake_to_pascal(&self.name);
+        Ident(match name.as_bytes().first() {
+            Some(b'0'..=b'9') => format!("_{name}"),
+            _ => name,
+        })
     }
 }
 
 impl ToTokens for Entry {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Entry {
-            name,
             value,
             summary,
             description,
             ..
         } = self;
-        let name = snake_to_pascal(name);
-        let name = match name.as_bytes().first() {
-            Some(b'0'..=b'9') => format!("_{name}"),
-            _ => name,
-        };
-        let name = Ident(&name);
+        let name = self.ident();
 
         let summary = summary.as_ref().map(|x| {
             quote! {
@@ -344,17 +368,24 @@ impl<'a> WithLifetime<'a> {
         let ty = match r#type {
             Type::Int => quote!(i32),
             Type::Uint => match r#enum {
-                Some(x) => match x.split_once(".") {
-                    Some((interface, name)) => {
-                        let name = Ident(&snake_to_pascal(name));
-                        let interface = Ident(interface);
-                        quote!(super::#interface::enums::#name)
+                Some(x) => {
+                    let ty = match x.split_once(".") {
+                        Some((interface, name)) => {
+                            let name = Ident(&snake_to_pascal(name));
+                            let interface = Ident(interface);
+                            quote!(super::#interface::enums::#name)
+                        }
+                        None => {
+                            let name = Ident(&snake_to_pascal(x));
+                            quote!(enums::#name)
+                        }
+                    };
+                    if self.decoding {
+                        quote!(<#ty as ::wayland_oxide::ProtocolEnum>::Wire)
+                    } else {
+                        ty
                     }
-                    None => {
-                        let name = Ident(&snake_to_pascal(x));
-                        quote!(enums::#name)
-                    }
-                },
+                }
                 None => quote!(u32),
             },
             Type::Fixed => quote!(::wayland_oxide::Fixed),

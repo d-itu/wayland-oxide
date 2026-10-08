@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="enum_test">
+  <interface name="enum_test" version="1">
+    <enum name="mode">
+      <entry name="off" value="0"/>
+      <entry name="2d" value="7"/>
+      <entry name="maximum" value="0xffffffff"/>
+    </enum>
+    <enum name="flags" bitfield="true">
+      <entry name="first" value="1"/>
+      <entry name="second" value="2"/>
+    </enum>
+    <request name="send">
+      <arg name="mode" type="uint" enum="mode"/>
+      <arg name="flags" type="uint" enum="flags"/>
+    </request>
+    <event name="receive">
+      <arg name="mode" type="uint" enum="mode"/>
+      <arg name="flags" type="uint" enum="flags"/>
+    </event>
+  </interface>
+</protocol>

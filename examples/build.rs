@@ -10,11 +10,10 @@ fn main() {
 
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     fs::write(out.join("wayland.rs"), code).unwrap();
-    for (name, side) in [
-        ("strings-client.rs", Side::Client),
-        ("strings-server.rs", Side::Server),
-    ] {
-        let code = Scanner::new().generate(["./tests/protocols/strings.xml"], side);
-        fs::write(out.join(name), code).unwrap();
+    for protocol in ["strings", "enums"] {
+        for (side_name, side) in [("client", Side::Client), ("server", Side::Server)] {
+            let code = Scanner::new().generate([format!("./tests/protocols/{protocol}.xml")], side);
+            fs::write(out.join(format!("{protocol}-{side_name}.rs")), code).unwrap();
+        }
     }
 }

@@ -6,6 +6,7 @@ extern crate alloc;
 
 use core::{
     fmt::{self, Debug, Display, Formatter},
+    marker::PhantomData,
     mem,
     num::NonZeroU32,
     str::{self, Utf8Error},
@@ -244,6 +245,43 @@ impl<T: TrivialUnmarshal> Unmarshal<'_> for T {
     fn unmarshal(reader: &mut Reader) -> unmarshal::Result<Self> {
         reader.read_trivial().ok_or(unmarshal::Error::NotEnoughData)
     }
+}
+
+/// A raw protocol enum value whose validity is checked on demand.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WireEnum<E> {
+    value: u32,
+    marker: PhantomData<E>,
+}
+
+impl<E> WireEnum<E> {
+    /// Return the raw value without checking whether it names a known variant.
+    pub const fn as_u32(&self) -> u32 {
+        self.value
+    }
+
+    /// Convert the raw value to a known enum variant.
+    pub fn try_into_enum(self) -> Result<E, E::Error>
+    where
+        E: TryFrom<u32>,
+    {
+        E::try_from(self.value)
+    }
+}
+
+impl<E> Unmarshal<'_> for WireEnum<E> {
+    fn unmarshal(reader: &mut Reader<'_>) -> unmarshal::Result<Self> {
+        Ok(Self {
+            value: reader.read()?,
+            marker: PhantomData,
+        })
+    }
+}
+
+#[doc(hidden)]
+pub trait ProtocolEnum {
+    type Wire;
 }
 
 /// A borrowed wire string, excluding its terminating NUL and alignment padding.
