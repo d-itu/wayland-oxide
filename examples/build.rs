@@ -4,10 +4,7 @@ use wayland_oxide_scanner::{Scanner, Side};
 
 fn main() {
     let code = Scanner::new().generate(
-        [
-            "/usr/share/wayland/wayland.xml",
-            "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml",
-        ],
+        ["./protocols/wayland.xml", "./protocols/xdg-shell.xml"],
         Side::Client,
     );
 

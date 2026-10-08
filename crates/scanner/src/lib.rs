@@ -2,30 +2,6 @@
 //! Generate rust protocol marshalling code from xml.
 //!
 //! This crate should be used as `build-dependency`
-//!
-//! # Usage
-//!
-//! `build.rs`
-//! ```
-//! use std::{
-//!     env, fs,
-//!     path::{Path, PathBuf},
-//! };
-//!
-//! use wayland_oxide_scanner::{Scanner, Side};
-//!
-//! fn main() {
-//!     let code = Scanner::new().generate([Path::new("/usr/share/wayland/wayland.xml")], Side::Client);
-//!
-//!     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-//!     fs::write(out_dir.join("wayland.rs"), code).unwrap()
-//! }
-//! ```
-//!
-//! `main.rs`
-//! ```
-//! include!(concat!(env!("OUT_DIR"), "/wayland.rs"));
-//! ```
 
 use std::{fs::File, io::BufReader, path::Path};
 

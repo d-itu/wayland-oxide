@@ -33,10 +33,6 @@ impl Buffer {
     /// Return a slice of unfilled part. Useful for io syscalls.
     ///
     /// Remember to call advance after read operation.
-    /// ```
-    /// let n = rustix::io::read(socket.as_fd(), &mut buffer.unfilled()).unwrap();
-    /// unsafe { buffer.advance(n) };
-    /// ```
     pub const fn unfilled(&mut self) -> &mut [MaybeUninit<u8>] {
         unsafe { self.data.split_at_mut_unchecked(self.filled).1 }
     }
