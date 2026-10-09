@@ -12,4 +12,4 @@ proc-macro2 = "1"
 quick-xml = { version = "0", features = ["overlapped-lists", "serialize"] }
 quote = { version = "1" }
 serde = { version = "1", features = ["derive"] }
-syn = { version = "2" }
+syn = { version = "3" }
