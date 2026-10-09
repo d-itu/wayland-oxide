@@ -25,8 +25,13 @@ struct Globals {
     wl_shm: Option<WlShm>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum Event {
-    Resize([u32; 2]),
+    Configure {
+        size: [u32; 2],
+        surface: XdgSurface,
+        serial: u32,
+    },
     Close,
 }
 
@@ -34,6 +39,7 @@ enum Event {
 struct Dispatcher {
     globals: Globals,
     events: Vec<Event>,
+    pending_size: [u32; 2],
     buffer: Vec<u8>,
     done: bool,
 }
@@ -162,9 +168,11 @@ impl Dispatch<XdgSurface> for Dispatcher {
         match event {
             xdg_surface::Event::Configure(lazy) => {
                 let serial = lazy.parse().unwrap().serial;
-                xdg_surface
-                    .ack_configure(serial)
-                    .marshal_to(&mut self.buffer);
+                self.events.push(Event::Configure {
+                    size: self.pending_size,
+                    surface: xdg_surface,
+                    serial,
+                });
             }
             xdg_surface::Event::_Unknown(_) => unreachable!(),
         }
@@ -180,8 +188,7 @@ impl Dispatch<XdgToplevel> for Dispatcher {
         match event {
             xdg_toplevel::Event::Configure(lazy) => {
                 let e = lazy.parse().unwrap();
-                self.events
-                    .push(Event::Resize([e.width, e.height].map(|x| x as _)));
+                self.pending_size = [e.width, e.height].map(|x| x as _);
             }
             xdg_toplevel::Event::Close(_) => {
                 self.events.push(Event::Close);
@@ -271,7 +278,15 @@ fn main() {
 
         for event in dispatcher.events.drain(..) {
             match event {
-                Event::Resize(new_size) => {
+                Event::Configure {
+                    size: new_size,
+                    surface,
+                    serial,
+                } => {
+                    socket
+                        .write_all(&surface.ack_configure(serial).marshal_to_boxed_slice())
+                        .unwrap();
+
                     if win_buffer.is_some() && new_size == size {
                         continue;
                     }
