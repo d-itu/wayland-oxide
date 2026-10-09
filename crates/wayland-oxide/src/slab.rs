@@ -305,69 +305,37 @@ impl<E: Entry, S: private::Side> Slab<E, S> {
         }
     }
 }
-impl<E: Entry> Slab<E, Client> {
+impl<E: Entry, S: private::Side> Slab<E, S> {
+    fn remove_from<T: Side>(&mut self, object: Object) -> Option<E::Value> {
+        let index = object.as_u32() as usize - T::SLOT_OFFSET;
+        let mut ignored = 0;
+        let next_free = if T::VEC_OFFSET == S::VEC_OFFSET {
+            &mut self.next_free
+        } else {
+            &mut ignored
+        };
+        slab_try_remove(&mut self.storage[T::VEC_OFFSET], next_free, index)
+    }
+
     /// Remove client-allocated value
     /// # Safety
     /// `object` must be client-allocated
     pub unsafe fn client_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
-        let id = object.as_u32();
-        let index = id as usize - 1;
-        slab_try_remove(
-            unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) },
-            &mut self.next_free,
-            index,
-        )
+        self.remove_from::<Client>(object)
     }
+
     /// Remove server-allocated value
     /// # Safety
     /// `object` must be server-allocated
     pub unsafe fn server_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
-        let id = object.as_u32();
-        let index = (id - ID_SPACE_MASK) as usize;
-        slab_try_remove(
-            unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) },
-            &mut 0,
-            index,
-        )
+        self.remove_from::<Server>(object)
     }
+
     /// Remove value
     pub fn remove(&mut self, object: Object) -> Option<E::Value> {
         match object.side() {
-            crate::Side::Client => unsafe { self.client_remove_unchecked(object) },
-            crate::Side::Server => unsafe { self.server_remove_unchecked(object) },
-        }
-    }
-}
-impl<E: Entry> Slab<E, Server> {
-    /// Remove client-allocated value
-    /// # Safety
-    /// `object` must be client-allocated
-    pub unsafe fn client_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
-        let id = object.as_u32();
-        let index = id as usize - 1;
-        slab_try_remove(
-            unsafe { self.storage.get_unchecked_mut(Client::VEC_OFFSET) },
-            &mut 0,
-            index,
-        )
-    }
-    /// Remove server-allocated value
-    /// # Safety
-    /// `object` must be server-allocated
-    pub unsafe fn server_remove_unchecked(&mut self, object: Object) -> Option<E::Value> {
-        let id = object.as_u32();
-        let index = (id - ID_SPACE_MASK) as usize;
-        slab_try_remove(
-            unsafe { self.storage.get_unchecked_mut(Server::VEC_OFFSET) },
-            &mut self.next_free,
-            index,
-        )
-    }
-    /// Remove value
-    pub fn remove(&mut self, object: Object) -> Option<E::Value> {
-        match object.side() {
-            crate::Side::Client => unsafe { self.client_remove_unchecked(object) },
-            crate::Side::Server => unsafe { self.server_remove_unchecked(object) },
+            crate::Side::Client => self.remove_from::<Client>(object),
+            crate::Side::Server => self.remove_from::<Server>(object),
         }
     }
 }
