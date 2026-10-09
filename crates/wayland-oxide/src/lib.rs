@@ -203,7 +203,9 @@ pub struct Header<P = Object, O = u16> {
     opcode: O,
     size: u16,
 }
-impl<P: Copy + Into<Object>, O: Opcode> Marshal for Header<P, O> {
+
+// SAFETY: WireHeader has a fixed size and is written in full.
+unsafe impl<P: Copy + Into<Object>, O: Opcode> Marshal for Header<P, O> {
     fn calc_size(&self) -> usize {
         mem::size_of::<WireHeader>()
     }
@@ -268,6 +270,12 @@ const fn aligned(align: usize, size: usize) -> usize {
 }
 
 #[doc(hidden)]
+/// A type whose complete memory representation can be copied to the wire.
+///
+/// # Safety
+///
+/// Every byte of a value must be initialized, including any padding. Copying
+/// `size_of::<Self>()` bytes must produce its wire representation.
 pub unsafe trait TrivialMarshal {}
 unsafe impl<T: Trivial> TrivialMarshal for T {}
 #[doc(hidden)]
@@ -280,7 +288,8 @@ unsafe impl Trivial for u32 {}
 unsafe impl Trivial for Fixed {}
 unsafe impl Trivial for Option<Object> {}
 
-impl<T: TrivialMarshal> Marshal for T {
+// SAFETY: TrivialMarshal guarantees that every copied byte is initialized.
+unsafe impl<T: TrivialMarshal> Marshal for T {
     fn calc_size(&self) -> usize {
         mem::size_of::<Self>()
     }
@@ -365,7 +374,8 @@ impl<'a> WireString<'a> {
     }
 }
 
-impl Marshal for &str {
+// SAFETY: The length prefix, payload, terminator, and padding are fully written.
+unsafe impl Marshal for &str {
     fn calc_size(&self) -> usize {
         4 + aligned(4, self.len() + 1)
     }
@@ -386,7 +396,8 @@ impl<'a> Unmarshal<'a> for WireString<'a> {
     }
 }
 
-impl Marshal for Option<&str> {
+// SAFETY: Some delegates to str; None writes its four-byte zero length.
+unsafe impl Marshal for Option<&str> {
     fn calc_size(&self) -> usize {
         if let Some(value) = self {
             value.calc_size()
@@ -413,9 +424,13 @@ impl<'a> Unmarshal<'a> for Option<WireString<'a>> {
     }
 }
 
-impl<S: Marshal> Marshal for GenericNewId<S> {
+// SAFETY: The interface and two fixed-size fields fill the checked total size.
+unsafe impl<S: Marshal> Marshal for GenericNewId<S> {
     fn calc_size(&self) -> usize {
-        self.interface.calc_size() + 8
+        self.interface
+            .calc_size()
+            .checked_add(8)
+            .expect("encoded size overflow")
     }
     unsafe fn marshal(&self, writer: &mut Writer) {
         unsafe {
@@ -435,7 +450,8 @@ impl<'a> Unmarshal<'a> for GenericNewId<WireString<'a>> {
     }
 }
 
-impl Marshal for &[u8] {
+// SAFETY: The length prefix, payload, and padding are fully written.
+unsafe impl Marshal for &[u8] {
     fn calc_size(&self) -> usize {
         4 + aligned(4, self.len())
     }
@@ -460,7 +476,8 @@ impl<'a> Unmarshal<'a> for &'a [u8] {
     }
 }
 
-impl Marshal for Fd {
+// SAFETY: File descriptor markers write and advance by zero bytes.
+unsafe impl Marshal for Fd {
     fn calc_size(&self) -> usize {
         0
     }
@@ -475,9 +492,13 @@ impl Unmarshal<'_> for Fd {
     }
 }
 
-impl<P: Copy + Into<Object>, T: MessageBody + Marshal> Marshal for Message<P, T> {
+// SAFETY: The header and body initialize consecutive regions of the checked size.
+unsafe impl<P: Copy + Into<Object>, T: MessageBody + Marshal> Marshal for Message<P, T> {
     fn calc_size(&self) -> usize {
-        self.header.calc_size() + self.body.calc_size()
+        self.header
+            .calc_size()
+            .checked_add(self.body.calc_size())
+            .expect("encoded size overflow")
     }
     unsafe fn marshal(&self, writer: &mut Writer) {
         unsafe {

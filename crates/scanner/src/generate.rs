@@ -547,9 +547,9 @@ impl ToTokens for Marshal<(&Message, MessageKind)> {
         let args = args.iter().map(|arg| Ident(&arg.name));
         let args1 = args.clone();
         tokens.extend(quote! {
-            impl #lifetime ::wayland_oxide::marshal::Marshal for #name #lifetime {
+            unsafe impl #lifetime ::wayland_oxide::marshal::Marshal for #name #lifetime {
                 fn calc_size(&self) -> usize {
-                    0 #(+self.#args.calc_size())*
+                    0usize #(.checked_add(self.#args.calc_size()).expect("encoded size overflow"))*
                 }
                 unsafe fn marshal(&self, _writer: &mut ::wayland_oxide::marshal::Writer) {
                     #(unsafe { _writer.write(&self.#args1) };)*

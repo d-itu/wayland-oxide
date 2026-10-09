@@ -12,7 +12,27 @@ use tuplez::{Tuple, Unit};
 use crate::{Message, MessageBody, Object};
 
 /// Types can be encoded to a message buffer.
-pub trait Marshal {
+///
+/// # Safety
+///
+/// On successful return, [`Self::marshal`] must initialize exactly
+/// [`Self::calc_size`] bytes at the writer's current position, including padding,
+/// and advance that writer by exactly this size without writing outside it.
+/// The size must remain stable across calls through shared references, including
+/// calls to `marshal`. Size calculations must not silently overflow.
+///
+/// Implementing this trait requires an explicit safety guarantee:
+///
+/// ```compile_fail,E0200
+/// use wayland_oxide::{Marshal, Writer};
+///
+/// struct Incomplete;
+/// impl Marshal for Incomplete {
+///     fn calc_size(&self) -> usize { 4 }
+///     unsafe fn marshal(&self, _: &mut Writer) {}
+/// }
+/// ```
+pub unsafe trait Marshal {
     /// Calculate byte size of a message. Size is used for allocating message buffer.
     fn calc_size(&self) -> usize;
     /// Marshal to a [`Writer`].
@@ -73,7 +93,8 @@ impl Writer<'_> {
     }
 }
 
-impl Marshal for Unit {
+// SAFETY: Unit writes and advances by zero bytes.
+unsafe impl Marshal for Unit {
     fn calc_size(&self) -> usize {
         0
     }
@@ -82,9 +103,13 @@ impl Marshal for Unit {
         _ = writer;
     }
 }
-impl<X: Marshal, Xs: Marshal> Marshal for Tuple<X, Xs> {
+// SAFETY: The fields initialize consecutive regions matching their checked sum.
+unsafe impl<X: Marshal, Xs: Marshal> Marshal for Tuple<X, Xs> {
     fn calc_size(&self) -> usize {
-        self.0.calc_size() + self.1.calc_size()
+        self.0
+            .calc_size()
+            .checked_add(self.1.calc_size())
+            .expect("encoded size overflow")
     }
 
     unsafe fn marshal(&self, writer: &mut Writer) {
