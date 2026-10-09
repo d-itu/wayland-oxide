@@ -3,8 +3,9 @@
 //!
 //! This crate should be used as `build-dependency`
 
-use std::{fs::File, io::BufReader, path::Path};
+use std::{fs, path::Path};
 
+use quick_xml::{NsReader, de::Deserializer};
 use quote::quote;
 use serde::Deserialize;
 
@@ -28,6 +29,18 @@ pub struct Scanner {
     pretty: bool,
 }
 
+fn normalize(input: &str) -> String {
+    let mut result = String::new();
+    let mut it = input.split_whitespace().peekable();
+    while let Some(s) = it.next() {
+        result.push_str(s);
+        if it.peek().is_some() {
+            result.push(' ');
+        }
+    }
+    result
+}
+
 impl Scanner {
     /// Create scanner with default configurations.
     pub fn new() -> Self {
@@ -45,17 +58,16 @@ impl Scanner {
         xmls: impl IntoIterator<Item = P>,
         side: Side,
     ) -> String {
-        let protocols = xmls
-            .into_iter()
-            .map(File::open)
-            .map(Result::unwrap)
-            .map(BufReader::new)
-            .map(quick_xml::de::Deserializer::from_reader)
-            .map(|mut x| Protocol::deserialize(&mut x).unwrap())
-            .map(|protocol| WithSide {
+        let protocols = xmls.into_iter().map(|path| {
+            let s = normalize(&fs::read_to_string(path).unwrap());
+            let mut reader = NsReader::from_str(&s);
+            reader.config_mut().trim_text(true);
+            let mut de = Deserializer::buffering(reader);
+            WithSide {
                 side,
-                item: protocol,
-            });
+                item: Protocol::deserialize(&mut de).unwrap(),
+            }
+        });
         let token_stream = quote! { #(#protocols)* };
         if self.pretty {
             prettyplease::unparse(&syn::parse2(token_stream).unwrap())

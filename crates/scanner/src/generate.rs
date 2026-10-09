@@ -59,14 +59,24 @@ impl ToTokens for WithSide<&Interface> {
         let requests_enum = requests.iter().map(MessageEnum);
         let events_enum = events.iter().map(MessageEnum);
 
-        fn enum_match(messages: &[Message]) -> impl Iterator<Item = impl ToTokens> {
-            messages.iter().enumerate().map(move |(idx, message)| {
-                let message = Ident(snake_to_pascal(&message.name));
-                let idx = idx as u16;
+        fn enum_match(messages: &[Message]) -> impl ToTokens {
+            if messages.is_empty() {
+                quote! { Self::_Unknown(reader) }
+            } else {
+                let cases = messages.iter().enumerate().map(move |(idx, message)| {
+                    let message = Ident(snake_to_pascal(&message.name));
+                    let idx = idx as u16;
+                    quote! {
+                        #idx => Self::#message(::wayland_oxide::Lazy::new(reader)),
+                    }
+                });
                 quote! {
-                    #idx => Self::#message(::wayland_oxide::Lazy::new(reader)),
+                    match _opcode {
+                        #(#cases)*
+                        _ => Self::_Unknown(reader)
+                    }
                 }
-            })
+            }
         }
 
         let requests_enum_match = enum_match(requests);
@@ -123,18 +133,15 @@ impl ToTokens for WithSide<&Interface> {
                 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
                 pub enum RequestOpcode {
                     #(#requests_opcode,)*
-                    SIZE,
+                    _SIZE,
                 }
                 pub enum Request<'a> {
                     #(#requests_enum)*
                     _Unknown(::wayland_oxide::Reader<'a>),
                 }
                 impl<'a> ::wayland_oxide::MessageEnum<'a> for Request<'a> {
-                    fn new(opcode: u16, reader: ::wayland_oxide::Reader<'a>) -> Self {
-                        match opcode {
-                            #(#requests_enum_match)*
-                            _ => Self::_Unknown(reader)
-                        }
+                    fn new(_opcode: u16, reader: ::wayland_oxide::Reader<'a>) -> Self {
+                        #requests_enum_match
                     }
                 }
                 #request_opcode_impl
@@ -143,18 +150,15 @@ impl ToTokens for WithSide<&Interface> {
                 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
                 pub enum EventOpcode {
                     #(#events_opcode,)*
-                    SIZE,
+                    _SIZE,
                 }
                 pub enum Event<'a> {
                     #(#events_enum)*
                     _Unknown(::wayland_oxide::Reader<'a>),
                 }
                 impl<'a> ::wayland_oxide::MessageEnum<'a> for Event<'a> {
-                    fn new(opcode: u16, reader: ::wayland_oxide::Reader<'a>) -> Self {
-                        match opcode {
-                            #(#events_enum_match)*
-                            _ => Self::_Unknown(reader)
-                        }
+                    fn new(_opcode: u16, reader: ::wayland_oxide::Reader<'a>) -> Self {
+                        #events_enum_match
                     }
                 }
                 #event_opcode_impl
@@ -176,9 +180,9 @@ impl ToTokens for WithSide<&Interface> {
                 impl<'a> ::wayland_oxide::HasEvents<'a> for Proxy {
                     type Event = Event<'a>;
                 }
-                impl Into<::wayland_oxide::Object> for Proxy {
-                    fn into(self) -> ::wayland_oxide::Object {
-                        self.0
+                impl From<Proxy> for ::wayland_oxide::Object {
+                    fn from(value: Proxy) -> ::wayland_oxide::Object {
+                        value.0
                     }
                 }
                 impl From<::wayland_oxide::Object> for Proxy {
@@ -510,8 +514,11 @@ impl ToTokens for StructDef<'_> {
                 .generate()
             })
             .map(|ArgResult { summary, name, ty }| {
-                quote! {
+                let docs = (!summary.is_empty()).then_some(quote! {
                     #[doc = #summary]
+                });
+                quote! {
+                    #docs
                     pub #name: #ty,
                 }
             });
