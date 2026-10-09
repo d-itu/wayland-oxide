@@ -272,7 +272,7 @@ fn main() {
         for event in dispatcher.events.drain(..) {
             match event {
                 Event::Resize(new_size) => {
-                    if new_size == size {
+                    if win_buffer.is_some() && new_size == size {
                         continue;
                     }
 
