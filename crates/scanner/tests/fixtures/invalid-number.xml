@@ -1,0 +1,3 @@
+<protocol name="invalid_number">
+  <interface name="test" version="" />
+</protocol>

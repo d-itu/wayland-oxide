@@ -144,13 +144,14 @@ impl<'de> Deserialize<'de> for Number {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let bytes = s.as_bytes();
-        if bytes[0] == b'0' && bytes.get(1).copied() == Some(b'x') {
-            u32::from_str_radix(&s[2..], 16)
+        if let Some(hex) = s.strip_prefix("0x") {
+            u32::from_str_radix(hex, 16)
         } else {
             s.parse()
         }
         .map(Number)
-        .map_err(serde::de::Error::custom)
+        .map_err(|error| {
+            serde::de::Error::custom(format!("invalid protocol number {s:?}: {error}"))
+        })
     }
 }

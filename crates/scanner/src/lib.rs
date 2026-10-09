@@ -3,7 +3,10 @@
 //!
 //! This crate should be used as `build-dependency`
 
-use std::{fs, path::Path};
+use std::{
+    error, fmt, fs, io,
+    path::{Path, PathBuf},
+};
 
 use quick_xml::{NsReader, de::Deserializer};
 use quote::quote;
@@ -21,6 +24,49 @@ pub enum Side {
     Server,
     /// generate client code
     Client,
+}
+
+/// An error while reading a protocol or generating Rust code.
+#[derive(Debug)]
+pub enum Error {
+    /// A protocol file could not be read.
+    Read {
+        /// Input file path.
+        path: PathBuf,
+        /// Underlying I/O error.
+        source: io::Error,
+    },
+    /// A protocol file contains invalid XML or field values.
+    Parse {
+        /// Input file path.
+        path: PathBuf,
+        /// Underlying deserialization error.
+        source: quick_xml::DeError,
+    },
+    /// Generated tokens could not be parsed as a Rust source file.
+    Generate(syn::Error),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { path, source } => write!(f, "failed to read {}: {source}", path.display()),
+            Self::Parse { path, source } => {
+                write!(f, "failed to parse {}: {source}", path.display())
+            }
+            Self::Generate(source) => write!(f, "invalid generated Rust: {source}"),
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        Some(match self {
+            Self::Read { source, .. } => source,
+            Self::Parse { source, .. } => source,
+            Self::Generate(source) => source,
+        })
+    }
 }
 
 /// Code generator configurations.
@@ -51,28 +97,45 @@ impl Scanner {
     pub fn pretty(self, pretty: bool) -> Self {
         Self { pretty, ..self }
     }
-    /// Generate code from xmls
-    #[must_use]
+    /// Generate code from XML files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading or deserializing an input fails, or if
+    /// formatting the generated Rust fails.
     pub fn generate<P: AsRef<Path>>(
         &self,
         xmls: impl IntoIterator<Item = P>,
         side: Side,
-    ) -> String {
-        let protocols = xmls.into_iter().map(|path| {
-            let s = normalize(&fs::read_to_string(path).unwrap());
-            let mut reader = NsReader::from_str(&s);
-            reader.config_mut().trim_text(true);
-            let mut de = Deserializer::buffering(reader);
-            WithSide {
-                side,
-                item: Protocol::deserialize(&mut de).unwrap(),
-            }
-        });
+    ) -> Result<String, Error> {
+        let protocols = xmls
+            .into_iter()
+            .map(|path| {
+                let path = path.as_ref();
+                let input = fs::read_to_string(path).map_err(|source| Error::Read {
+                    path: path.to_owned(),
+                    source,
+                })?;
+                let s = normalize(&input);
+                let mut reader = NsReader::from_str(&s);
+                reader.config_mut().trim_text(true);
+                let mut de = Deserializer::buffering(reader);
+                Ok(WithSide {
+                    side,
+                    item: Protocol::deserialize(&mut de).map_err(|source| Error::Parse {
+                        path: path.to_owned(),
+                        source,
+                    })?,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
         let token_stream = quote! { #(#protocols)* };
         if self.pretty {
-            prettyplease::unparse(&syn::parse2(token_stream).unwrap())
+            Ok(prettyplease::unparse(
+                &syn::parse2(token_stream).map_err(Error::Generate)?,
+            ))
         } else {
-            token_stream.to_string()
+            Ok(token_stream.to_string())
         }
     }
 }
