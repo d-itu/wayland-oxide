@@ -129,10 +129,8 @@ impl<'b> Iterator for Iter<'b> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut reader = Reader::new(self.remaining);
         let header: WireHeader = reader.read_trivial()?;
-        let object = header.object;
-        let opcode = header.opcode();
-        let size = header.size();
 
+        let size = header.size();
         if size < 8 || !size.is_multiple_of(4) {
             self.remaining = &[];
             return Some(Err(InvalidMessageSize(size)));
@@ -143,8 +141,8 @@ impl<'b> Iterator for Iter<'b> {
         *self.consumed += size as usize;
 
         Some(Ok(Message {
-            object,
-            opcode,
+            object: header.object,
+            opcode: header.opcode(),
             reader: Reader::new(body),
         }))
     }
