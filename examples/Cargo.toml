@@ -2,6 +2,7 @@
 name = "wayland-oxide-examples"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [[example]]
 name = "list-globals"
